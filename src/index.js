@@ -57,6 +57,7 @@ export const defaults = {
   capacityPerScope: 5000,
   /** 每轮最多增量抽取次数，1..10。 */
   extractPassesPerTurn: 2,
+  compactOnce: false,
   /** 单次抽取调用的超时（毫秒）；超时中止本次抽取并释放 latch，避免永久卡住。 */
   extractTimeoutMs: 60000,
   /** 写入门槛（0–1）；显式 remember 不受此限。 */
@@ -222,6 +223,7 @@ export function resolveConfig(config) {
     globalTtlDays: clampInt(Number(merged.globalTtlDays), 0, 3650, defaults.globalTtlDays),
     capacityPerScope: clampInt(Number(merged.capacityPerScope), 100, 100000, defaults.capacityPerScope),
     extractPassesPerTurn: clampInt(Number(merged.extractPassesPerTurn), 1, 10, defaults.extractPassesPerTurn),
+    compactOnce: merged.compactOnce === true || process.env.DSH_CONTEXT_HUB_COMPACT_ONCE === '1',
     extractTimeoutMs: clampInt(Number(merged.extractTimeoutMs), 5000, 300000, defaults.extractTimeoutMs),
     admissionThreshold: Math.min(1, Math.max(0, Number(merged.admissionThreshold) || defaults.admissionThreshold)),
     conflictPolicy: policy,
@@ -236,7 +238,7 @@ export function resolveConfig(config) {
 }
 
 const ACTIVITY_LABELS = {
-  recall: '召回', 'recall-miss': '召回未命中', extract: '抽取', compact: '压缩', summary: '摘要', request: '请求', restore: '还原', decompress: '还原原文', mode: '模式', forget: '遗忘', supersede: '替换', compactor: '压缩器', abtest: 'A/B', rewrite: '改写', 'rewrite-error': '改写失败', watermark: '水位压缩', 'watermark-error': '水位失败', 'watermark-toggle': '水位开关', 'rewrite-retry': '改写重试', rerank: '重排', 'rerank-error': '重排失败', 'rerank-empty': '重排空输出', reembed: '重算向量', 'embedding-reset': '清旧向量', 'embedding-start': '启动向量服务', 'embedding-ready': '向量服务就绪', 'embedding-start-error': '向量服务启动失败', 'recall-timeout': '召回超时', unfold: '展开原文',
+  recall: '召回', 'recall-miss': '召回未命中', extract: '抽取', compact: '压缩', summary: '摘要', request: '请求', restore: '还原', decompress: '还原原文', mode: '模式', forget: '遗忘', supersede: '替换', compactor: '压缩器', abtest: 'A/B', rewrite: '改写', 'rewrite-error': '改写失败', watermark: '水位压缩', 'watermark-error': '水位失败', 'watermark-toggle': '水位开关', 'rewrite-retry': '改写重试', rerank: '重排', 'rerank-error': '重排失败', 'rerank-empty': '重排空输出', reembed: '重算向量', 'embedding-reset': '清旧向量', 'embedding-start': '启动向量服务', 'embedding-ready': '向量服务就绪', 'embedding-start-error': '向量服务启动失败', 'recall-timeout': '召回超时', unfold: '展开原文', 'compact-auto': '自动压缩', 'compact-auto-error': '自动压缩失败',
 }
 
 /** 粗估文本 token 数（中文 ~1.6 字符/token，英文偏保守）；只用于注入硬顶。 */
@@ -2986,6 +2988,44 @@ function statusSnapshot(ctx, store, session, sessionId) {
 }
 
 /** 面板数据路由：由 connection 服务托管鉴权，供客户端 fetch。 */
+/**
+ * 一次性空闲压缩：turn/end 后等 agent 空闲，调一次 compactNow。
+ * 忙（用户紧接着发了新消息）时不消耗开关，下一轮 turn/end 再试。
+ */
+function installAutoCompact(ctx, store) {
+  if (store.config.compactOnce !== true) return
+  let pending = false
+  ctx.on('session/event', (session, event) => {
+    if (event.type !== 'turn/end') return
+    if (store.getKv('compact-once.done') === '1' || pending) return
+    pending = true
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const agent = ctx.get('agents')?.get(session.id)
+          const compaction = ctx.get('compaction')
+          if (!agent || !compaction) return
+          await agent.whenIdle?.()
+          const result = await compaction.compactNow(agent, new AbortController().signal)
+          store.setKv('compact-once.done', '1')
+          store.logEvent('compact-auto', {
+            tokens: result?.shadowedTokenCount ?? 0,
+            detail: result ? `seq ${result.startSeq}-${result.endSeq}` : '无可压缩区间',
+          })
+        } catch (error) {
+          const message = String(error?.message ?? error)
+          if (!/active work|busy/i.test(message)) {
+            store.setKv('compact-once.done', '1')
+            store.logEvent('compact-auto-error', { detail: message })
+          }
+        } finally {
+          pending = false
+        }
+      })()
+    }, 400)
+  }, { global: true })
+}
+
 function installStatusRoute(ctx, store) {
   try {
     ctx.inject(['connection'], (scope) => {
@@ -3952,6 +3992,7 @@ export function apply(ctx, config) {
   }
   installStatusRoute(ctx, store)
   installUnfold(ctx, store)
+  installAutoCompact(ctx, store)
 
   ctx.on('session/event', (session, event) => {
     if (event.type === 'turn/start') {

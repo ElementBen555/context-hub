@@ -104,7 +104,7 @@ node --max-old-space-size=8192 scripts/eval/recall.mjs --format longmemeval \
 | `zh-holdout`（12 题） | 25% | **100%** | 66.7% | 0.799 | 5ms |
 | 30 条改写探针 | 13.3% | **80%** | 53.3% | — | 5.6ms |
 
-对比：同探针 bge-small 56.7%、bge-m3+中文前缀 66.7%（见 1.5.3 记录）。e5 的代价是英文上不如中文明显（LongMemEval 子集与词法持平），且模型要求 `query:`/`passage:` 前缀时需额外配置。
+对比：同探针 bge-small 56.7%、bge-m3+中文前缀 66.7%（见 CHANGELOG 1.5.4）。e5 的代价是英文上不如中文明显（LongMemEval 子集与词法持平），且模型要求 `query:`/`passage:` 前缀时需额外配置。
 
 autoStart 复跑注意：profile 里要同时写 `embedding.dtype: q8`，否则插件拉起的服务会用 fp32 去找 `model.onnx`（1.5.4 起透传）。
 

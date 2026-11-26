@@ -11,7 +11,9 @@
 `context_hub_abtest` 取会话尾部最近 N 条 user/assistant 消息（跳过 context-hub 自己的注入），拼成输入，然后用当前会话的真实模型路由跑两次 `ctx.llm.stream`：
 
 - **A（原生式）**：Primary Request and Intent / Key Technical Concepts / Files and Code / Errors and Fixes / Pending Jobs / Current Work / Next Step。
-- **B（记忆感知 8 段）**：用户目标 / 用户约束 / 关键技术 / 文件与代码 / 错误与修复 / 未完成事项 / 当前进展 / 下一步；提示词额外要求保留绝对路径、命令、配置键、数值阈值、错误原文、决策理由，并注入最多 5 条召回记忆，冲突时以对话为准。
+- **B（记忆感知 8 段）**：用户目标 / 用户约束 / 关键技术 / 文件与代码 / 错误与修复 / 未完成事项 / 当前进展 / 下一步；提示词额外要求保留绝对路径、命令、配置键、数值阈值、错误原文、决策理由，冲突时以对话为准。
+
+A/B 都收到同一份带「记忆候选」的 transcript（`store.search()` 取 5 条，附在「--- 记忆候选 ---」块），因此差异只来自 8 段提示词结构，不能归因于「是否注入记忆」。
 
 指标：
 
@@ -36,9 +38,9 @@
 
 - 单次输入、单模型；样本代表性有限。
 - 来源覆盖是词元重叠，不等于事实保真；后续应加入探针问题（问摘要回答具体事实，对照原文判分）。
-- B 依赖召回记忆，记忆为空时退化为「8 段提示词」；本轮实测命中 5 条。
+- 记忆候选对 A/B 相同（本轮命中 5 条）；记忆为空时两者都只比较提示词结构。
 - A/B 只比较提示词，不比较压缩触发与选区（那需要服务级替换）。
 
 ## 下一步
 
-若多轮 A/B 仍显示 B 更完整，再实现服务级替换：独立 bundle 子类化 `BasicCompactionEngine`，只覆盖 `summarize()`，保留原生触发/选区/恢复逻辑，用配置 `compactor: native|hub` 切换，默认 native。
+服务级替换已在 0.5.0 完成（`installHubCompactor()` 实例包装 `summarize()`，配置 `compactor: native|hub`，默认 native）；剩余是真实压缩事件上的 A/B 与回归：用线上 `/compact` 的输入复跑 A/B，确认 8 段结构在真实压缩上不退步。

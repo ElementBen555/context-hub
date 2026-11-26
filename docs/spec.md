@@ -1,6 +1,6 @@
 # 上下文中枢 · 功能规格（v1.0 冻结 + 实现对照）
 
-> 本文件是**冻结的目标规格**，后面的「与 1.6.1 实现的差距」逐项标明落地状态；参数总表同时给出代码默认值，二者冲突时以代码与本章实现列为准。
+> 本文件是**冻结的目标规格**，后面的「与 1.6.4 实现的差距」逐项标明落地状态；参数总表同时给出代码默认值，二者冲突时以代码与本章实现列为准。
 
 > 状态：**已冻结 v1.0**（2026-11-25，D1–D5 已拍板，见第 9 节）。参数调整走版本变更：先改本文档 → 再改实现。
 > 本文档定义「压缩、记忆、观测」三件事的边界、参数与验收标准；实现差距见第 8 节。
@@ -86,7 +86,7 @@
 ### C7 与原生 compaction 的边界
 
 - **不替换** `compaction-basic`，不注册第二个 compaction 服务。
-- 本插件只做：触发策略、折叠区检索、P2 的「记忆感知摘要」（通过 `summarize()` 钩子，需先解决服务替换问题）。
+- 本插件只做：触发策略、折叠区检索、P2 的「记忆感知摘要」——已实现（0.5.0）：包装 `compaction` 实例的 `summarize()`，不替换服务；默认 `compactor: 'native'`，hub 为 opt-in。
 
 ---
 
@@ -96,7 +96,7 @@
 
 一条记忆 = **一条自包含命题** + 元数据。判定标准：脱离当前对话、去掉指代后仍能独立成立。
 
-类型限定：`decision`（决策+理由）、`fact`（项目事实）、`preference`（用户偏好）、`task`（未完成）、`skill`（可复用做法）。
+类型限定：`decision`（决策+理由）、`fact`（项目事实）、`preference`（用户偏好）、`task`（未完成）、`skill`（可复用做法）、`summary`（压缩摘要自动生成，scope=session）。
 
 ### M2 写入门槛（质量分 0–1，≥0.6 才写）
 
@@ -114,11 +114,11 @@
 
 ```
 kind, scope(session|project|global), confidence(0–1),
-source(extracted|explicit|tool), evidenceSeq[], 
-created_at, last_used, uses, status(active|superseded|archived)
+source(extracted|explicit|tool|compaction), evidenceSeq（单个区间字符串，如 "12-19"）,
+created_at, last_used, uses, status(active|superseded|archived|pending|deleted)
 ```
 
-置信度默认：`explicit = 1.0`、`tool = 0.8`、`extracted = 0.6`。
+置信度默认：`explicit = 1.0`、`compaction = 0.95`、`tool = 0.8`、`extracted = 0.6`。
 
 ### M4 作用域与生命周期（默认 session，可跨会话）
 
@@ -141,8 +141,8 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 ```
 
 - 每 scope 上限 **5000 条**；超出按 `runtime_score` 升序淘汰到 `archived`。
-- `archived` 不参与召回，但保留可检索与可恢复。
-- 物理删除只能通过显式命令（`/context-hub forget <id>`）。
+- `archived` 不参与召回，记录保留，可按 id 用 `audit` 追溯；暂无恢复为 `active` 的命令（`/context-hub restore` 只还原折叠区原文，不是恢复记忆）。
+- 删除是软删除 + 墓碑：`/context-hub forget <id>` 只把 `status` 置为 `deleted` 并保留审计链（不做硬删除、无额外确认步骤）；已删除条目不会被同文写入复活。
 
 ### M6 复用与召回
 
@@ -176,12 +176,12 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 - 每条记忆可追溯 `evidenceSeq`（哪几条消息支撑）与 `source`。
 - `/context-hub` 提供：`search`、`remember`、`forget <id>`、`supersede <id> <新内容>`、`audit <id>`。
 - 每周自动维护（P2）：去重合并、过期归档、冲突扫描。
-- 任何自动变更都要留下 `status` 变更记录（不物理删）。
+- 任何自动变更都要留下 `status` 变更记录（只改状态、不删记录）。
 
 ### M9 隐私与隔离
 
-- 记忆库默认权限 `0600`（当前实现创建后需显式 chmod，属差距项）。
-- 项目隔离：默认只召回当前 `project` + `global`；跨项目需显式 `/context-hub search --all`。
+- 记忆库默认权限 `0600`：打开库时 `open()` 执行 `chmod 0600`（失败不阻塞）。
+- 项目隔离：默认只召回当前 `project` + `global`；跨项目检索只能用工具 `context_hub_search` 的 `all: true`，命令 `/context-hub search` 暂不支持 `--all`。
 - 面板与导出只读本地，不上传；导出文件包含原文，需提示用户。
 
 ---
@@ -236,9 +236,9 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 
 给定一条查询，输出每条候选的：命中 token、base/scope/decay 分、是否被预算或冷却过滤。回答「为什么这条没被召回」。
 
-### O7 客户端面板（0.6.0 起；1.4.0 图形化/表格化；1.5.5 分区）
+### O7 客户端面板（0.6.0 起；1.4.0 图形化/表格化；1.5.5 分区；1.6.3 左栏入口）
 
-- 入口：composer 下方胶囊 → portal 弹层。固定 KPI 头（压力环 + surface/合计/节点/输出预留）；下方四分区：概览（构成 / 成本曲线 / 活动 Top 5）、记忆（指标块 + 范围/类型条形图 + 最近使用表 + 待审核 approve/reject）、观测（上下文明细 / 活动全量 / 最近主请求与召回车道）、配置（运行参数 + 水位开关 + 压缩器 + 接管模式）。
+- 入口：左侧栏底部徽章（圆环 + 百分比，待审带琥珀点）→ portal 弹层。固定 KPI 头（压力环 + surface/合计/节点/输出预留）；下方四分区：概览（构成 / 成本曲线 / 活动 Top 5）、记忆（指标块 + 范围/类型条形图 + 最近使用表 + 待审核 approve/reject）、观测（上下文明细 / 活动全量 / 最近主请求与召回车道）、配置（运行参数 + 水位开关 + 压缩器 + 接管模式）。
 - 写操作仅限治理与开关：`POST /api/context-hub.watermark`、`/review`、`/action`（forget/supersede/compactor/mode）；记忆内容不可编辑，上下文数据只读。
 - 数据：宿主 `GET /api/context-hub.status`（connection 鉴权）返回 `{ok, session{surfaceTokens,totalTokens,nodes,pressure,contextWindow,parts,folded,events}, memory{active,scopes,kinds,recent}, activity, config, compactor, db}`。
 - 刷新：打开后 10 秒轮询，关闭停止；失败显示错误而不阻塞聊天。
@@ -247,7 +247,7 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 ### O6 入口与导出
 
 - `/context-hub status`：文本版六段摘要。
-- 面板 tab（P2）：只读，支持展开与筛选。
+- 面板（已实现，0.6.0 起，O7）：左栏底部徽章打开弹层，支持展开与筛选，并提供治理与开关的写操作。
 - 导出：JSON 事件流 + 记忆库快照（显式操作，含隐私提示）。
 
 ---
@@ -310,11 +310,11 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 - 切换：配置 `compactor`（重启生效）或 `/context-hub compactor hub|native`（运行时）。
 - 理由（D6）：out-of-tree 插件无法解析 `@deepseek-ai/dsh-compaction-basic`（会引入第二份 cordis）；同 profile 不允许双 compaction 服务；单插件是用户前提。
 
-## 8. 与 1.6.0 实现的差距
+## 8. 与 1.6.4 实现的差距
 
 | 需求 | 现状 | 差距 | 优先级 |
 | --- | --- | --- | --- |
-| M2 写入门槛 | 五维评分 ≥0.6，显式 remember 绕过 | 已实现（0.2.0） | — |
+| M2 写入门槛 | 五维加权 ≥0.6，显式 remember / compaction 绕过 | 部分实现（0.2.0）：durable/specific/verifiable 真实打分；nonDerivable 只有 0.2/0.5 两档、nonDuplicate 恒为 1（均为常量，不是真实判定） | P2 |
 | M4 scope/TTL | scope 列 + TTL 归档（3/7/15/30 可配） | 已实现（0.2.0） | — |
 | M5 衰减/容量 | 运行时打分 + 每 scope 5000 上限淘汰 | 已实现（0.2.0） | — |
 | M6 召回预算 | 8 条 / 1800 字符，冷却 6 轮 | 已实现（1.5.6） | — |
@@ -329,7 +329,7 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 | O3 会话视图 | 命令 `log` + 工具 `context_hub_log` 时间线 | 已实现（0.3.0） | — |
 | O5 召回调试 | 命令 `explain` + 工具 `context_hub_explain` 输出候选与打分明细、跳过原因 | 已实现（0.3.0） | — |
 | O6 导出 | `export` 写 JSON 快照（0600） | 已实现（0.3.0） | — |
-| O7 面板 | composer 胶囊 + 四分区弹层（KPI/概览/记忆/观测/配置），治理与开关路由 | 已实现（1.5.5）；用户已目视确认 | locale 未接 |
+| O7 面板 | 左栏底部徽章（圆环 + 百分比，待审带琥珀点）+ 四分区弹层（KPI/概览/记忆/观测/配置），治理与开关路由 | 已实现（1.5.5 四分区；1.6.3 左栏入口）；用户已目视确认 | locale 未接 |
 | O8 检索探针 | `context_hub_probe` 输出 top-k 命中率与逐条位置 | 已实现（0.7.0） | — |
 | M6 混合检索 | 关键词 + FTS5 trigram 加成；不可用降级 | 已实现（0.7.0） | — |
 | W3 摘要可检索 | `compaction/summary` → `kind=summary`（session）记忆，`search/explain/probe` 可命中；`status` 显示最近压缩与水位 | 已实现（0.9.0）；水位阈值仍由原生 `thresholdRatio/retainTokens` 决定 | 水位透传校验 |
@@ -347,7 +347,7 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 | C1 触发水位 | `watermark`（opt-in）：pre-step 按 triggerRatio 触发，自己取「保留尾部 retainTokens」的区间调 `compactRegion`；默认关闭，失败记录并交给原生 | 已实现（1.2.0，opt-in）；开关可持久化（1.2.1） | 大区间授权策略 |
 | C4 8 段摘要 | `compactor: hub` 时 8 段（含用户约束） | 已实现（0.5.0；`native` 仍用原生提示词） | — |
 | 权限 0600 | 创建后 chmod 0600 | 已实现（0.3.0） | — |
-| 分发 | `dist/dsh-context-hub-0.7.0.tgz` + `dist/INSTALL.md`；绝对路径 `.tgz` 可装 | 已打包自检，未在其它 profile 端到端验证 | npm 未发布（用户决定） |
+| 分发 | `dist/` 由 `scripts/pack.sh` 按 `package.json` 版本生成（`git archive`，含 `embed/node_modules`），当前 1.6.4；`dist/INSTALL.md` 说明绝对路径 `.tgz` 安装（本次发布生成 1.6.4 归档） | 已打包自检，未在其它 profile 端到端验证 | npm 未发布（用户决定） |
 
 ---
 
@@ -374,9 +374,9 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 ### 9ter.3 可选 LLM 重排（1.2.2，默认关）
 
 - 位置：`maybeRecall` 选中预算前、`context_hub_search`、`/context-hub search`；`explain` 复用同一路径。
-- 做法：取关键词/FTS/向量合并后的前 `candidates` 条（默认 10），把「查询 + 编号候选」交给一次 `llm.stream`（`purpose=context-hub:rerank`，maxTokens 200），要求只返回按相关度排序的编号 JSON 数组；按返回顺序重排，未提及的候选保持原相对顺序接在后面。
+- 做法：取关键词/FTS/向量合并后的前 `candidates` 条（默认 10），把「查询 + 编号候选」交给一次 `llm.stream`（`purpose=context-hub:rerank`，maxTokens 默认 600、可配 100–2000），要求只返回按相关度排序的编号 JSON 数组；按返回顺序重排，未提及的候选保持原相对顺序接在后面。
 - 降级：无 `llm`、模型路由缺失、超时（默认 8s）、输出不是数组 → 记 `rerank-error`/`rerank-empty` 并原样返回，不影响召回。
-- 配置：`rerank {enabled, provider, model, candidates, timeoutMs}`；env `DSH_CONTEXT_HUB_RERANK=1` / `_PROVIDER` / `_MODEL`。
+- 配置：`rerank {enabled, provider, model, candidates, maxTokens, timeoutMs}`；env `DSH_CONTEXT_HUB_RERANK=1` / `_PROVIDER` / `_MODEL`。
 - 成本：每条真人消息多一次模型调用；召回是异步的，不阻塞用户回合，但会占用一次额度。
 - 边界：只重排已入选候选，不扩大召回集合；语义缺口仍需向量或改写补。
 
@@ -387,7 +387,7 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 | D1 | session 记忆 TTL | 默认 7 天；可选 3 / 7 / 15 / 30 天 |
 | D2 | 压缩水位 | 70% 触发、压到 60%；先按默认，后续看效果调整 |
 | D3 | 召回预算 | 8 条 / 1800 字符、冷却 6 轮（1.5.6 起）；抽取 2 次/轮 |
-| D4 | 抽取频率 | 默认每轮一次、按增量；可自定义每轮次数，最大 10 |
+| D4 | 抽取频率 | 默认每轮 2 次（1.5.6 起）、按增量；可配 1–10 |
 | D5 | 冲突策略 | 默认「新证据胜 + 决策并列标注」；可选「严格时间优先」 |
 
 冻结后的调整流程：改本文档并升小版本（v1.1…）→ 同步参数总表与差距表 → 再改实现。
@@ -402,7 +402,7 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 - **查询**：召回时 `embedQuery()` 取查询向量（内存缓存 100 条），`rank()` 对每条候选算 cosine；`cos ≥ minScore` 时 `emb = 0.5 + 0.5·cos`，与关键词/FTS 分相加；无词元重叠也可单独命中。
 - **降级**：端点非 2xx、超时、响应缺 `data[].embedding` 时记 `embedError` 并继续关键词路径；`status` 显示「+向量（异常：…）」。
 - **隐私**：开启后记忆文本（含路径/标识符）会发送到配置的外部端点；默认关闭，文档需在启用说明中标注。
-- **本地服务（1.3.0）**：`embed/` 目录随包分发（`server.mjs` + `start.sh`/`stop.sh` + README，不含 node_modules 与模型缓存）；`embedding.autoStart` 默认 true，仅当 `baseUrl` 是回环地址（127.0.0.1/localhost/::1）时生效——插件启动先 ping `/health`，未就绪则 `spawn(process.execPath, [embed/server.mjs], {detached:true})`，端口取自 `baseUrl`、模型取自 `embedding.model`（无 `/` 时补 `Xenova/`），30s 内轮询就绪后回填向量；事件 `embedding-start`/`embedding-ready`/`embedding-start-error`，失败只降级。手动 `start.sh` 仍可用，两者共用同一 `embed.pid` 之外的端口检测（先 ping，避免重复进程）。
+- **本地服务（1.3.0）**：`embed/` 目录随包分发（`server.mjs` + `start.sh`/`stop.sh` + README）；1.6.2 起包含 `node_modules`（3,163 个文件 / 462.7MB），模型缓存不随包，另附 `dsh-context-hub-models-e5-q8.tar.gz`（解压到 `embed/.cache/`）；`embedding.autoStart` 默认 true，仅当 `baseUrl` 是回环地址（127.0.0.1/localhost/::1）时生效——插件启动先 ping `/health`，未就绪则 `spawn(process.execPath, [embed/server.mjs], {detached:true})`，端口取自 `baseUrl`、模型取自 `embedding.model`（无 `/` 时补 `Xenova/`），30s 内轮询就绪后回填向量；事件 `embedding-start`/`embedding-ready`/`embedding-start-error`，失败只降级。手动 `start.sh` 仍可用，两者共用同一 `embed.pid` 之外的端口检测（先 ping，避免重复进程）。
 
 - **规模化**：`journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=5000`；候选窗口 `CANDIDATE_WINDOW=800`，FTS 命中按 id 补入（≤50 条），避免大库只覆盖最近窗口造成的漏召回。
 - **度量**：`scripts/stress.mjs` 10k 条 → rank p50 12.5ms / p95 15.2ms（120 查询）、probe 20/20（133ms）、库 3.9MB（本机 Node 24.22.2）。
@@ -412,10 +412,12 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 
 ```
 candidate ──score≥0.6──▶ active
+candidate ──reviewPending 且 confidence<0.8──▶ pending ──approve──▶ active
+pending ──reject──▶ deleted
 active ──新证据冲突──▶ superseded
 active ──TTL 到期/容量淘汰──▶ archived
-archived ──显式恢复──▶ active
-active/archived ──显式 forget──▶ deleted（物理删，需二次确认）
+active/archived/pending ──显式 forget──▶ deleted（软删除 + 墓碑，审计链保留）
+（暂无 archived → active 的恢复命令；`/context-hub restore` 只还原折叠区原文，不是恢复记忆）
 ```
 
 ## 附录 B：召回打分（目标）

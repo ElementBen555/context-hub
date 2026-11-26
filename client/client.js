@@ -93,7 +93,7 @@ window.__ModuleLoader__.load({
       .chp-icon:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(15,23,42,.06));color:var(--dsw-alias-label-primary,#0f172a)}
       .chp-kpi{padding:12px 18px 0}
       .chp-hero{display:flex;align-items:center;gap:16px;padding:12px 14px;border-radius:14px;
-        background:var(--dsw-alias-card-fill,var(--dsw-alias-bg-layer-2,#f8fafc));
+        background:linear-gradient(135deg,color-mix(in srgb,var(--dsw-alias-state-business-primary,#2563eb) 7%,var(--dsw-alias-card-fill,#f8fafc)),var(--dsw-alias-card-fill,var(--dsw-alias-bg-layer-2,#f8fafc)) 55%);
         border:1px solid var(--dsw-alias-border-l1,rgba(15,23,42,.08))}
       .chp-ring{flex:none;display:grid;place-items:center;position:relative;width:78px;height:78px}
       .chp-ring svg{transform:rotate(-90deg)}
@@ -102,7 +102,28 @@ window.__ModuleLoader__.load({
       .chp-ring-cap{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary,#94a3b8)}
       .chp-stats{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:8px 12px;min-width:0}
       .chp-stat{min-width:0}
-      .chp-stat-k{font-size:10px;color:var(--dsw-alias-label-tertiary,#94a3b8);white-space:nowrap}
+      .chp-stat-k{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--dsw-alias-label-tertiary,#94a3b8);white-space:nowrap}
+      .chp-stat-i{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:5px;flex:none}
+      .chp-duo{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+      .chp-donut{position:relative;width:max-content;margin:2px auto 0}
+      .chp-donut-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;pointer-events:none}
+      .chp-donut-v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.05}
+      .chp-donut-k{font-size:9.5px;color:var(--dsw-alias-label-tertiary,#94a3b8)}
+      .chp-legend{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+      .chp-legend-row{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dsw-alias-label-secondary,#475569)}
+      .chp-legend-row b{margin-left:auto;font-weight:650;color:var(--dsw-alias-label-primary,#0f172a);font-variant-numeric:tabular-nums}
+      .chp-legend-pct{width:36px;text-align:right;font-size:10px;color:var(--dsw-alias-label-tertiary,#94a3b8);font-variant-numeric:tabular-nums}
+      .chp-cache{display:flex;align-items:center;gap:10px;margin-top:9px;padding:8px 10px;border-radius:10px;
+        background:var(--dsw-alias-card-fill,var(--dsw-alias-bg-layer-2,#f8fafc));
+        border:1px solid var(--dsw-alias-border-l1,rgba(15,23,42,.08))}
+      .chp-cache-v{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+      .chp-chips{display:flex;flex-wrap:wrap;gap:5px}
+      .chp-chip-cap{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:8px;font-size:10.5px;
+        color:var(--dsw-alias-label-secondary,#475569);background:var(--dsw-alias-bg-layer-2,rgba(15,23,42,.04));
+        border:1px solid var(--dsw-alias-border-l1,rgba(15,23,42,.07))}
+      .chp-chip-cap-k{color:var(--dsw-alias-label-tertiary,#94a3b8)}
+      .chp-chip-cap-v{font-weight:650;color:var(--dsw-alias-label-primary,#0f172a)}
+      .chp-cache-k{font-size:10.5px;color:var(--dsw-alias-label-secondary,#475569)}
       .chp-stat-v{font-size:13.5px;font-weight:650;font-variant-numeric:tabular-nums;
         white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .chp-tabs{display:flex;gap:2px;padding:10px 14px 0;margin-top:10px;
@@ -198,7 +219,7 @@ window.__ModuleLoader__.load({
         border-top:1px solid var(--dsw-alias-border-l1,rgba(15,23,42,.08));
         font-size:10.5px;color:var(--dsw-alias-label-tertiary,#94a3b8);
         background:var(--dsw-alias-bg-layer-2,rgba(248,250,252,.6))}
-      .chp-pill{display:inline-flex;align-items:center;gap:7px;margin:2px 8px 6px 0;padding:3px 10px 3px 5px;
+      .chp-pill{display:inline-flex;align-items:center;gap:7px;margin:2px auto 6px 0;padding:3px 10px 3px 5px;
         border-radius:999px;cursor:pointer;font-family:inherit;font-size:12px;line-height:16px;
         color:var(--dsw-alias-label-secondary,#475569);
         background:var(--dsw-alias-bg-layer-1,#fff);
@@ -207,6 +228,7 @@ window.__ModuleLoader__.load({
       .chp-pill:hover{color:var(--dsw-alias-label-primary,#0f172a);
         border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 45%,transparent);
         background:var(--dsw-alias-interactive-bg-hover,rgba(15,23,42,.04))}
+      .chp-chip{gap:5px;margin:0;padding:3px 8px 3px 4px;font-size:11px;border-radius:9px}
       .chp-pill-strong{color:var(--dsw-alias-label-primary,#0f172a);font-weight:600}
       .chp-pill-dim{color:var(--dsw-alias-label-tertiary,#94a3b8)}
       .chp-pill-warn{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-warn-primary,#f59e0b);
@@ -267,10 +289,75 @@ window.__ModuleLoader__.load({
         }))
     }
 
+    const GLYPHS = {
+      layers: ['M12 3 3 8l9 5 9-5-9-5Z', 'M3 13l9 5 9-5'],
+      sum: ['M4 7c0-2 3-3 8-3s8 1 8 3-3 3-8 3-8 1-8 3 3 3 8 3 8-1 8-3', 'M12 6v12'],
+      grid: ['M4 4h7v7H4Z', 'M13 4h7v7h-7Z', 'M4 13h7v7H4Z', 'M13 13h7v7h-7Z'],
+      out: ['M7 17 17 7', 'M9 7h8v8'],
+    }
+    function Glyph(props) {
+      const paths = GLYPHS[props.name] ?? []
+      return h('svg', {
+        width: props.size ?? 10, height: props.size ?? 10, viewBox: '0 0 24 24',
+        fill: 'none', stroke: 'currentColor', strokeWidth: 2.2,
+        strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
+      }, paths.map((d, index) => h('path', { key: index, d })))
+    }
+
     function Stat(props) {
       return h('div', { className: 'chp-stat' },
-        h('div', { className: 'chp-stat-k' }, props.label),
+        h('div', { className: 'chp-stat-k' },
+          props.icon === undefined ? null : h('span', {
+            className: 'chp-stat-i',
+            style: { color: props.color, background: `color-mix(in srgb, ${props.color} 13%, transparent)` },
+          }, h(Glyph, { name: props.icon })),
+          props.label),
         h('div', { className: 'chp-stat-v', title: props.title ?? undefined }, props.value))
+    }
+
+    function Donut(props) {
+      const items = (props.items ?? []).filter(item => Number(item.value) > 0)
+      const total = items.reduce((sum, item) => sum + Number(item.value), 0)
+      const size = props.size ?? 118
+      const width = props.width ?? 14
+      const radius = (size - width) / 2
+      const circumference = 2 * Math.PI * radius
+      let consumed = 0
+      const arcs = items.map((item, index) => {
+        const length = (Number(item.value) / total) * circumference
+        const gap = items.length > 1 ? 2 : 0
+        const dash = Math.max(0, length - gap)
+        const arc = h('circle', {
+          key: item.key ?? index,
+          cx: size / 2, cy: size / 2, r: radius, fill: 'none',
+          stroke: item.color, strokeWidth: width,
+          strokeDasharray: `${dash} ${circumference - dash}`,
+          strokeDashoffset: -consumed,
+          transform: `rotate(-90 ${size / 2} ${size / 2})`,
+        })
+        consumed += length
+        return arc
+      })
+      return h('div', { className: 'chp-donut' },
+        h('svg', { width: size, height: size, viewBox: `0 0 ${size} ${size}`, 'aria-hidden': 'true' },
+          h('circle', {
+            cx: size / 2, cy: size / 2, r: radius, fill: 'none',
+            stroke: 'var(--dsw-alias-border-l2,rgba(15,23,42,.1))', strokeWidth: width,
+          }),
+          arcs),
+        h('div', { className: 'chp-donut-c' },
+          h('div', { className: 'chp-donut-v' }, props.center ?? fmt(total)),
+          props.caption === undefined ? null : h('div', { className: 'chp-donut-k' }, props.caption)))
+    }
+
+    function Legend(props) {
+      const items = props.items ?? []
+      const total = items.reduce((sum, item) => sum + Number(item.value), 0) || 1
+      return h('div', { className: 'chp-legend' }, items.map(item => h('div', { key: item.key, className: 'chp-legend-row' },
+        h('span', { className: 'chp-dot', style: { background: item.color } }),
+        h('span', null, item.label),
+        h('b', null, String(item.value)),
+        h('span', { className: 'chp-legend-pct' }, pctText(Number(item.value), total)))))
     }
 
     function Section(props) {
@@ -289,6 +376,13 @@ window.__ModuleLoader__.load({
           border: `1px solid color-mix(in srgb, ${color} 26%, transparent)`,
         },
       }, props.children ?? props.kind)
+    }
+
+    const ACTIVITY_COLORS = {
+      recall: '#3b82f6', 'recall-miss': '#f59e0b', extract: '#8b5cf6', request: '#64748b',
+      rerank: '#06b6d4', rewrite: '#10b981', probe: '#a855f7', compact: '#ef4444',
+      'compact-hub': '#ef4444', unfold: '#0ea5e9', restore: '#14b8a6', reembed: '#eab308',
+      'watermark': '#f97316', 'watermark-error': '#dc2626', 'review-approve': '#22c55e',
     }
 
     function Track(props) {
@@ -327,9 +421,17 @@ window.__ModuleLoader__.load({
     }
 
     function Tile(props) {
-      return h('div', { className: 'chp-tile', title: props.title ?? undefined },
+      const color = props.color
+      return h('div', {
+        className: 'chp-tile',
+        title: props.title ?? undefined,
+        style: color === undefined ? undefined : {
+          borderColor: `color-mix(in srgb, ${color} 22%, transparent)`,
+          background: `linear-gradient(160deg, color-mix(in srgb, ${color} 9%, var(--dsw-alias-card-fill,#f8fafc)), var(--dsw-alias-card-fill,#f8fafc))`,
+        },
+      },
         h('div', { className: 'chp-tile-k' }, props.label),
-        h('div', { className: 'chp-tile-v' }, props.value))
+        h('div', { className: 'chp-tile-v', style: color === undefined ? undefined : { color } }, props.value))
     }
 
     function Bars(props) {
@@ -351,7 +453,8 @@ window.__ModuleLoader__.load({
           h('span', { className: 'chp-dot', style: { background: item.color, marginRight: '7px' } }),
           item.label),
         h('td', { className: 'num' }, fmt(item.value)),
-        h('td', { className: 'num' }, pctText(item.value, total))))
+        h('td', { className: 'num', style: { color: item.color, fontWeight: 650 } }, pctText(item.value, total)),
+        h('td', { style: { width: '26%' } }, h(Track, { percent: (item.value / total) * 100, color: item.color }))))
       return h('div', null,
         h('div', { className: 'chp-bar', 'aria-label': '上下文构成' },
           items.filter(item => item.value > 0).map(item => h('div', {
@@ -364,7 +467,8 @@ window.__ModuleLoader__.load({
           h('thead', null, h('tr', null,
             h('th', null, '分段'),
             h('th', { className: 'num' }, 'tokens'),
-            h('th', { className: 'num' }, '占比'))),
+            h('th', { className: 'num' }, '占比'),
+            h('th', { style: { width: '26%' } }, '分布'))),
           h('tbody', null, rows)))
     }
 
@@ -520,7 +624,11 @@ window.__ModuleLoader__.load({
               const cacheRead = usageSamples.reduce((sum, item) => sum + Number(item.usage.cacheRead ?? 0), 0)
               const output = usageSamples.reduce((sum, item) => sum + Number(item.usage.output ?? 0), 0)
               const cacheRate = input + cacheRead > 0 ? Math.round((cacheRead / (input + cacheRead)) * 100) : 0
-              usageLine = `缓存命中 ${cacheRate}% · input ${fmt(input)} / cache read ${fmt(cacheRead)} / output ${fmt(output)}`
+              usageLine = h('div', { className: 'chp-cache' },
+                ring(cacheRate, 44, 5.5, 'var(--dsw-alias-state-success-primary,#10b981)'),
+                h('div', null,
+                  h('div', { className: 'chp-cache-v' }, `${cacheRate}%`),
+                  h('div', { className: 'chp-cache-k' }, `缓存命中 · input ${fmt(input)} / cache read ${fmt(cacheRead)} / output ${fmt(output)}`)))
             }
             sections.push(h(Section, { key: 'cost', title: '成本曲线', extra: `最近 ${series.length} 次主请求 · 左旧右新` },
               h('div', { className: 'chp-grid2' },
@@ -532,7 +640,7 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'chp-mini-title' }, '注入 tokens'),
                   h(Sparkline, { values: injections, color: 'var(--dsw-alias-state-success-primary,#10b981)' }),
                   h('div', { className: 'chp-note' }, `均值 ${fmt(injectAvg)} · 占总量 ${(injectRatio < 10 ? injectRatio.toFixed(1) : Math.round(injectRatio))}%`))),
-              usageLine === null ? null : h('div', { className: 'chp-note' }, usageLine)))
+              usageLine))
           }
 
           if (activity.length > 0) {
@@ -549,7 +657,7 @@ window.__ModuleLoader__.load({
                   h('td', { className: 'num' }, String(entry.count)),
                   h('td', null, h(Track, {
                     percent: (entry.count / max) * 100,
-                    color: 'var(--dsw-alias-state-business-primary,#2563eb)',
+                    color: ACTIVITY_COLORS[entry.kind] ?? 'var(--dsw-alias-state-business-primary,#2563eb)',
                   }))))))))
           }
         }
@@ -571,18 +679,20 @@ window.__ModuleLoader__.load({
             title: '记忆库',
             extra: `${fmt(memory.active)} 有效 · ${fmt(memory.pending ?? 0)} 待审`,
           },
-            h('div', { className: 'chp-tiles' }, memoryItems.map(item => h(Tile, {
+            h('div', { className: 'chp-tiles' }, memoryItems.map((item, index) => h(Tile, {
               key: item.key,
               label: item.label,
               value: item.value,
+              color: ['#2563eb', '#f59e0b', '#8b5cf6', '#64748b', '#0ea5e9'][index],
             }))),
-            h('div', { className: 'chp-grid2' },
+            h('div', { className: 'chp-duo' },
               h('div', null,
                 h('div', { className: 'chp-mini-title' }, '按范围'),
                 h(Bars, { items: scopeItems })),
               h('div', null,
                 h('div', { className: 'chp-mini-title' }, '按类型'),
-                h(Bars, { items: kindItems }))),
+                h(Donut, { items: kindItems, center: fmt(memory.active), caption: '有效记忆', size: 118 }),
+                h(Legend, { items: kindItems }))),
             h('div', { style: { marginTop: '12px' } },
               h('button', {
                 type: 'button',
@@ -664,7 +774,7 @@ window.__ModuleLoader__.load({
                   h('td', { className: 'num' }, String(entry.count)),
                   h('td', null, h(Track, {
                     percent: (entry.count / max) * 100,
-                    color: 'var(--dsw-alias-state-business-primary,#2563eb)',
+                    color: ACTIVITY_COLORS[entry.kind] ?? 'var(--dsw-alias-state-business-primary,#2563eb)',
                   }))))))))
           }
 
@@ -711,8 +821,24 @@ window.__ModuleLoader__.load({
             ['语义召回', `向量 ${config.embedding === true ? `开（${config.fusion ?? 'weighted'}）` : '关'} · 改写 ${config.rewrite === true ? '开' : '关'}`],
             ['水位保留', `${config.watermarkRetainTurns ?? 0} 轮 / ${config.watermarkRetainTokens ?? 0} tokens`],
           ]
+          const capabilities = [
+            ['检索', config.embedding === true ? `向量 · ${config.fusion ?? 'weighted'}` : '关键词 + FTS5', config.embedding === true ? '#10b981' : '#64748b'],
+            ['改写', config.rewrite === true ? '开' : '关', config.rewrite === true ? '#3b82f6' : '#94a3b8'],
+            ['重排', config.rerank === true ? '开' : '关', config.rerank === true ? '#8b5cf6' : '#94a3b8'],
+            ['压缩', snapshot.compactor === 'hub' ? 'hub 8 段' : 'native', '#f59e0b'],
+            ['水位', config.watermark === true ? '开' : '关', config.watermark === true ? '#f97316' : '#94a3b8'],
+            ['模式', config.mode ?? 'auto', '#0ea5e9'],
+          ]
           sections.push(h(Section, { key: 'config', title: '运行参数' },
-            h('table', { className: 'chp-table' },
+            h('div', { className: 'chp-chips' }, capabilities.map(([label, value, color]) => h('span', {
+              key: label,
+              className: 'chp-chip-cap',
+              title: `${label}：${value}`,
+            },
+              h('span', { className: 'chp-dot', style: { background: color } }),
+              h('span', { className: 'chp-chip-cap-k' }, label),
+              h('span', { className: 'chp-chip-cap-v' }, value)))),
+            h('table', { className: 'chp-table', style: { marginTop: '10px' } },
               h('thead', null, h('tr', null, h('th', null, '项'), h('th', { className: 'num' }, '值'))),
               h('tbody', null, configRows.map(([key, value]) => h('tr', { key },
                 h('td', null, key),
@@ -782,7 +908,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'chp-logo' }, 'CH'),
           h('div', { className: 'chp-titles' },
             h('h2', { className: 'chp-title' }, '上下文中枢'),
-            h('div', { className: 'chp-sub' }, `${sessionLabel} · 只读`)),
+            h('div', { className: 'chp-sub' }, `${sessionLabel} · 会话只读 · 治理可写`)),
           h('div', { className: 'chp-actions' },
             h('button', { type: 'button', className: 'chp-icon', title: '刷新', onClick: onRefresh }, '↻'),
             h('button', { type: 'button', className: 'chp-icon', title: '关闭（Esc）', onClick: onClose, autoFocus: true }, '✕'))),
@@ -797,10 +923,10 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'chp-ring-num' }, percent === undefined ? '—' : `${percent}%`),
                   h('div', { className: 'chp-ring-cap' }, '压力'))),
               h('div', { className: 'chp-stats' },
-                h(Stat, { label: 'surface', value: `${fmt(session.surfaceTokens)} tokens`, title: String(session.surfaceTokens) }),
-                h(Stat, { label: '合计', value: `${fmt(session.totalTokens)} tokens`, title: String(session.totalTokens) }),
-                h(Stat, { label: '节点 / 事件', value: `${fmt(session.nodes)} / ${fmt(session.events)}` }),
-                h(Stat, { label: '输出预留', value: `${fmt(session.outputReserve)} tokens` })))),
+                h(Stat, { label: 'surface', value: `${fmt(session.surfaceTokens)} tokens`, title: String(session.surfaceTokens), icon: 'layers', color: '#3b82f6' }),
+                h(Stat, { label: '合计', value: `${fmt(session.totalTokens)} tokens`, title: String(session.totalTokens), icon: 'sum', color: '#8b5cf6' }),
+                h(Stat, { label: '节点 / 事件', value: `${fmt(session.nodes)} / ${fmt(session.events)}`, icon: 'grid', color: '#10b981' }),
+                h(Stat, { label: '输出预留', value: `${fmt(session.outputReserve)} tokens`, icon: 'out', color: '#f59e0b' })))),
         snapshot === null ? null : h(Tabs, { tabs, active: tab, onChange: setTab }),
         h('div', { className: 'chp-scroll' }, sections),
         h('div', { className: 'chp-foot' },
@@ -818,8 +944,20 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // 左栏 footer 是 root scope，拿不到 sessionId；由 composer 座位把当前会话 id 记下来共享。
+    let currentSessionId = ''
+    const sessionIdListeners = new Set()
+    function rememberSessionId(id) {
+      const next = typeof id === 'string' ? id : ''
+      if (next === '' || next === currentSessionId) return
+      currentSessionId = next
+      for (const listener of sessionIdListeners) listener(next)
+    }
+
     function Pill(props) {
       const sessionId = props.sessionId
+      const compact = props.compact === true
+      const showText = props.showText !== false
       const [snapshot, setSnapshot] = React.useState(null)
       const [failed, setFailed] = React.useState(null)
       const [open, setOpen] = React.useState(false)
@@ -933,13 +1071,13 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null,
         h('button', {
           type: 'button',
-          className: 'chp-pill',
+          className: compact ? 'chp-pill chp-chip' : 'chp-pill',
           title: pending ? `打开上下文中枢面板（${pending} 条待审核）` : '打开上下文中枢面板',
           onClick: () => setOpen(value => !value),
         },
           percent === undefined ? null : ring(percent, 18, 2.5, 'var(--dsw-alias-state-business-primary, #2563eb)'),
-          h('span', { className: 'chp-pill-strong' }, label),
-          h('span', { className: 'chp-pill-dim' }, `· 记忆 ${memory ?? '—'}`),
+          showText ? h('span', { className: 'chp-pill-strong' }, compact ? (percent === undefined ? '—' : `${percent}%`) : label) : null,
+          compact ? null : h('span', { className: 'chp-pill-dim' }, `· 记忆 ${memory ?? '—'}`),
           pending ? h('span', { className: 'chp-pill-warn', title: `${pending} 条待审核` }) : null),
         open ? createPortal(h(Panel, {
           snapshot,
@@ -952,14 +1090,34 @@ window.__ModuleLoader__.load({
         }), document.body) : null)
     }
 
+    function ComposerAnchor(props) {
+      const sessionId = props.sessionId
+      React.useEffect(() => { rememberSessionId(sessionId) }, [sessionId])
+      return null
+    }
+
+    function SidebarChip(props) {
+      const [sessionId, setSessionId] = React.useState(currentSessionId)
+      React.useEffect(() => {
+        sessionIdListeners.add(setSessionId)
+        return () => { sessionIdListeners.delete(setSessionId) }
+      }, [])
+      return h(Pill, { sessionId, compact: true, showText: props.wide !== false })
+    }
+
     return {
       inject: ['slots'],
       apply(ctx) {
-        ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
-          name: 'conversation.composer.dock',
+        ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+          name: 'sidebar.footer.action',
           id: 'context-hub-status',
           order: 2,
-        }, Pill))
+        }, SidebarChip))
+        ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+          name: 'conversation.composer.dock',
+          id: 'context-hub-session',
+          order: 2,
+        }, ComposerAnchor))
       },
     }
   },

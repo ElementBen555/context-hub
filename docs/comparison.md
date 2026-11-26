@@ -1,6 +1,6 @@
 # dsh-context-hub 优劣势与补强计划
 
-> 版本：2026-11-26 · 对应实现 **1.6.1**
+> 版本：2026-11-26 · 对应实现 **1.6.4**
 > 目的：把「和别的插件比，强在哪、弱在哪」写清楚，并把弱项收敛成五个可验收的补强方向。
 > 方法：本机实测（`test-smoke.mjs`、`scripts/*.mjs`、真实会话的 `context_hub_status/probe/abtest`）+ 竞品 README、npm registry、GitHub 公开数据。**没有做同环境、同数据集的横向跑分**；竞品能力以其公开描述与公开数据为准，数据口径见 §2.1，引用见 §8。
 > 与上一版的差异：1.1.1 版主要对比 billion-context / graph-memory / dsh-context，未纳入 dsh-memory（灵枢）、OpenViking、dsh-mnemon；本版补齐这三个，并修正 graph-memory 的仓库引用（在架项目为 `adoresever/graph-memory`，不是旧文档里的 `d3412-999/dsh-graph-memory`）。
@@ -16,8 +16,9 @@
 - 1.5.1 补齐：B2 阶段 2（消息级聚合排序 + ±1 句窗口）、B3 LongMemEval-S 48 题实跑（词法 evidence R@5 79.2%）、E1 面板 forget/supersede/compactor/mode、E2 请求车道与 usage/cache 汇总。
 - 1.5.2 补齐可选增量：**独立消息索引**（`messages` + `messages_fts`，零记忆时也能按消息召回）、**LongMemEval 向量路径**、**面板成本曲线**。
 - 1.5.3 补齐：**多语言 embedder**（multilingual-e5-small：zh-holdout R@5 100%、英文 LongMemEval 12 题向量与词法持平 83.3%）、**RRF 可选融合**（默认 weighted；RRF 在英文上反而伤，已如实记录）、**retainTurns 接管**（保留最后 N 个用户回合，只折叠最旧前缀）。**D2 仍受 npm 账号阻塞；100k/多用户按单机定位延后。**
+- **1.6.x 已落地**：1.6.0 召回硬顶/超时（`recallMaxTokens`/`recallTimeoutMs`）、git project 身份、消息级 `unfold`；1.6.1 遗忘墓碑/会话隔离与事务化写入；1.6.2 仓库内置 `embed/node_modules` 与 `pack.sh` 分发包；1.6.3 面板入口移到左栏徽章；1.6.4 面板四分区图表（甜甜圈、缓存命中环、活动配色）。
 
-## 1. 我们是什么（1.6.1）
+## 1. 我们是什么（1.6.4）
 
 | 环节 | 实现 | 入口 |
 | --- | --- | --- |
@@ -25,15 +26,15 @@
 | 召回 | 用户消息触发，独立消息索引 + 关键词/FTS5 + 可选向量（weighted/RRF）、LLM 改写/重排；≤8 条/1800 字符、6 轮冷却、1200 tokens 硬顶、4000ms 超时；消息级候选 + ±1 句窗口 | 自动 + `context_hub_search` |
 | 检索质量 | `probe` 自造查询测 top-k；`explain` 给逐条打分与跳过原因；`abtest` 对比压缩提示词；**B1/B3 新增 `doctor` 与 `scripts/eval/recall.mjs`** | 工具 + `/context-hub` 子命令 |
 | 压缩 | 默认复用原生 compaction；`compactor: hub` 包装 `summarize()`；`watermark` opt-in，支持 `retainTokens`/`retainTurns`（保留 N 轮，只折叠最旧前缀）；`mode` 四档 | `/context-hub compact`、`compactor`、`watermark`、`mode` |
-| 折叠区 | `compaction/summary` 落成 `kind=summary` 记忆；按 seq 检索 `history`、还原 `restore`；**C2 新增按摘要区间 `decompress`** | `context_hub_history` / `context_hub_restore` / `context_hub_decompress` |
-| 洞察 | surface/总 tokens、六项构成、输出预留、水位、折叠区间、最近压缩、最近主请求、记忆库构成、消息索引与成本曲线；E2 起请求行带注入 tokens | `/context-hub status`、composer 面板 |
+| 折叠区 | `compaction/summary` 落成 `kind=summary` 记忆；按 seq 检索 `history`、还原 `restore`；**C2 新增按摘要区间 `decompress`**；1.6.0 起可对摘要区间 `unfold`（临时展开原文） | `context_hub_history` / `context_hub_restore` / `context_hub_decompress` / `context_hub_unfold` |
+| 洞察 | surface/总 tokens、六项构成、输出预留、水位、折叠区间、最近压缩、最近主请求、记忆库构成、消息索引与成本曲线；E2 起请求行带注入 tokens | `/context-hub status`、左栏底部徽章（1.6.3 起，点击开面板） |
 | 治理 | scope/TTL/容量、冲突 supersede（写 `valid_to`）、软删、审计链、审核流、JSON 导出；E1 起面板可 approve/reject | `forget/supersede/audit/log/export/review` + 面板 |
 | 关系 | `memory_links`（related/supersedes），召回时一跳扩展 ≤1 条 | 自动 + `explain` 可见 |
 | 消息索引 | 独立 `messages` + `messages_fts`；召回前增量索引，零记忆时也能按原文召回 | 自动 + `explain` 消息候选 |
 
 实测基线（2026-11-25，本机 profile `web`，deepseek-flash）：surface 539,150 tokens → 1.1.0 时 669,147 tokens / 1,388 节点 / 5,268 事件；记忆 active 6；`probe` 4/4 → 20/20（自动出题，**不构成泛化证据**）；30 条改写探针：词法 top-6 13.3%，接本地 `multilingual-e5-small` 后 80%（24/30，p50 5.6ms）；zh-holdout 向量 R@1 66.7% / R@5 100%；A/B 摘要 B 8/8 段、来源覆盖 0.25，A 7/7 段、0.30。
 
-## 2. 横向对比（1.5.3）
+## 2. 横向对比（对比数据快照，截至 1.5.3）
 
 ### 2.1 数据口径
 
@@ -41,10 +42,10 @@
 
 | 项目 | 版本 | 形态 | npm 月下载 | GitHub stars | 公开评测 |
 | --- | --- | --- | ---: | ---: | --- |
-| context-hub | 1.5.3 | DSH 单 bundle，本地 SQLite | **未发布（404）** | 未统计 | 自造 30 条 + `zh-holdout` 12 条 + LongMemEval-S 48 题（另 12 题向量对照） |
+| context-hub | 1.5.3（快照） | DSH 单 bundle，本地 SQLite | **未发布（404）** | 未统计 | 自造 30 条 + `zh-holdout` 12 条 + LongMemEval-S 48 题（另 12 题向量对照） |
 | billion-context | 0.1.216 | 代理/原生跨客户端压缩层 | 3,921,176 | 8,394 | 论文 + 1500 题三方基准 + 生产数据 |
 | dsh-memory（灵枢） | 0.11.1 | Python MCP 子进程 + md 认知图 + Rust 检索 | 38,245 | 753 | hive-memory-bench + LoCoMo 第三方复现 |
-| OpenViking | 0.5.41 | 独立服务端 + DSH 插件 | 49,132 | 42,753 | 以产品与集成测试为主 |
+| OpenViking | 0.5.42 | 独立服务端 + DSH 插件 | 49,132 | 42,753 | 以产品与集成测试为主 |
 | graph-memory | 1.6.0-beta.17 | DSH 原生 + OpenClaw 适配 | 594（npm 仍为旧版） | 680 | 20 轮实测（T20 -80.69%）+ 149 测试 |
 | dsh-mnemon | 0.5.55 | DSH 原生 + 可组合 Source/Strategy | 165,754 | 1,127 | 机制测试；明确声明不代表模型准确率 |
 
@@ -90,7 +91,7 @@
 | 规模验证 | 10k、3 进程；100k 未测 | Rust 检索、并发实例 | 服务端 | 未强调 | 未强调 |
 | 分发 | 未发 npm；tgz 已修自依赖 | npm | npm + 官网安装器 | npm 旧版，GitHub 固定 tag | npm + 市场 |
 | 安装体验 | 需手改 profile/绝对路径 | `init` + MCP | 安装器/插件页 | 固定 tag | 插件页一键 |
-| 兼容 | DSH 0.2.x、Node ≥22.5 | 跨 MCP 宿主 | DSH <1.0 | DSH 0.2.x | DSH 0.2.x |
+| 兼容 | DSH 0.2.x、Node ≥22.13 | 跨 MCP 宿主 | DSH <1.0 | DSH 0.2.x | DSH 0.2.x |
 
 ### 2.6 观测与 UI
 
@@ -169,7 +170,7 @@
 > 对应上一轮对比的五个方面：A 记忆写入与治理、B 检索与召回、C 压缩与上下文接管、D 部署/规模/生态、E 观测与 UI。
 > 优先级：P0 先做（决定能不能被用起来），P1 做深（决定能不能被留下），P2 做宽（决定能不能被传播）。
 >
-> 完成度（2026-11-25，1.5.3）：**D1 / A2 / B1 / B2 / B3 / C1 / C2 / E1 / E2 完成第一版；B4（weighted/RRF）与 C3（retainTurns/前缀稳定）完成第一版**；D2 阻塞，100k/多用户延后。详见 §9。
+> 完成度（对比数据快照，截至 2026-11-25 / 1.5.3；1.6.x 进展见 §0）：**D1 / A2 / B1 / B2 / B3 / C1 / C2 / E1 / E2 完成第一版；B4（weighted/RRF）与 C3（retainTurns/前缀稳定）完成第一版**；D2 阻塞，100k/多用户延后。详见 §9。
 
 ### A. 记忆写入与治理（对齐灵枢 / graph-memory / mnemon）
 
@@ -187,7 +188,7 @@
 | --- | --- | --- | --- | --- |
 | B1 | 推荐档与自检 | 新增 `context_hub_doctor`（或 `/context-hub doctor`）：检测 FTS5/embedding/模型端点，输出 `minimal / balanced / semantic` 三档建议与可粘贴配置（一键写入留到下一增量） | 一条命令给出当前档位与缺口；不静默降级 | P0 |
 | B2 | 消息级召回（已完成） | 独立 `messages/messages_fts` 增量索引；零记忆时也能按原文召回；按来源消息聚合排序，渲染 ±1 句窗口 | 零记忆消息召回、原文窗口、聚合排序均有 smoke 断言 | P0 |
-| B3 | 公共基准 | 已交付 `scripts/eval/recall.mjs` + `scripts/eval/zh-holdout.json` + `docs/EVAL.md`；LongMemEval 48 题词法、12 题向量对照；zh-holdout R@5 词法 25% → 向量 58.3% | 可复跑脚本；报告 R@1/3/5/10、MRR、p50/p95；LongMemEval 数据需自备 | P0 |
+| B3 | 公共基准 | 已交付 `scripts/eval/recall.mjs` + `scripts/eval/zh-holdout.json` + `docs/EVAL.md`；LongMemEval 48 题词法、12 题向量对照；zh-holdout R@5 词法 25% → bge-base 83.3% / e5 100%（早期向量数字因未等 embedding 队列而欠采样，勿引用；修正见 `docs/EVAL.md`） | 可复跑脚本；报告 R@1/3/5/10、MRR、p50/p95；LongMemEval 数据需自备 | P0 |
 | B4 | 车道融合与归因（第一版） | 词法/FTS 与向量支持 `weighted`（默认）/`rrf`；`explain` 显示 lex/vec 名次与 RRF；重排只作用于 top-k | 同一数据集消融：zh-holdout e5 R@5 100%；英文 RRF 反而伤，默认 weighted | P1 |
 | B5 | 查询卫生 | 只取本步用户原文构造查询；排除注入块、工具结果、其他插件消息；避免自我召回 | smoke 断言：注入消息不触发检索 | P1 |
 
@@ -205,7 +206,7 @@
 
 | 编号 | 动作 | 做法 | 验收 | 优先级 |
 | --- | --- | --- | --- | --- |
-| D1 | 修包（已完成） | 删除 `package.json` 的自依赖；`private` 改为 `false`；`files` 重新审计 | `npm pack --dry-run` 通过（29 文件，无 `file:` 依赖）；干净 profile 从 tgz 安装无解析错误 | P0 |
+| D1 | 修包（已完成） | 删除 `package.json` 的自依赖；`private` 改为 `false`；`files` 重新审计 | `npm pack --dry-run` 通过（1.6.4 实测 30 文件 / 253,204 字节，无 `file:` 依赖）；干净 profile 从 tgz 安装无解析错误 | P0 |
 | D2 | 上架 | npm 账号就绪后 `npm publish`；提交 dshmarket；用 `install_bundle(target="dsh-context-hub@x.y.z")` 验证第三方路径 | registry 200；市场页可安装；README 去掉“未发布”限定 | P0（受账号阻塞） |
 | D3 | 规模化 | 造 100k 条 + 长事务 + 4 进程；为 `rank()` 的 scope/status 加组合索引；记录 WAL/quick_check | rank/probe p95 达标；无锁死；库大小与内存可接受 | P1 |
 | D4 | 兼容矩阵 | 覆盖 DSH 0.2.x 的 RC/正式版、Node 22/24；smoke 进 CI | 矩阵全绿；失败给出可复现命令 | P1 |
@@ -228,7 +229,7 @@
 | --- | --- | --- | --- |
 | P0 | 1.5.0 | D1 修包、A2 证据粒度、B1 推荐档/自检、B2 消息级召回（阶段 1）、B3 公共基准脚手架、C1 接管分级、C2 消息级可逆 | 第一批已完成；“装得上、测得准、可还原”已闭环 |
 | P0 | 1.5.x | D2 上架（账号就绪后）+ 1.5.1/1.5.2 已补齐消息索引 / LongMemEval 词法+向量 / 成本曲线 / E1/E2 | 除 D2 外已完成 |
-| P1 | 1.6.0 | A1/A3/A4、B5、C4/C5、D3/D4/D5、E4 | B4/C3 已在 1.5.3 完成第一版；剩余补齐默认体验与治理 |
+| P1 | 1.6.0 | 召回硬顶/超时、git project 身份、消息级 `unfold`（实际交付） | 原计划的 A1/A3/A4、B5、C4/C5、D3/D4/D5、E4 仍未做 |
 | P2 | 2.0 | A5、E3、E5、D6 边界与可移植 | 生态与长期维护 |
 
 每个阶段结束统一跑：`node test-smoke.mjs`、`node scripts/stress.mjs`（或 100k 版）、真实会话 `probe`、`status` 对照、`docs/` 与 `CHANGELOG.md` 更新、版本号 +0.1。涉及检索/压缩的改动必须同时更新 `docs/spec.md` 的验收标准，避免文档与实现再次漂移。
@@ -259,7 +260,7 @@
 
 | 顺序 | 编号 | 事项 | 状态 | 验收证据 |
 | ---: | --- | --- | --- | --- |
-| 1 | D1 | 修包：清 `package.json` 自依赖、`private`、files | **完成** | `npm pack --dry-run` 29 文件；无 `file:` 依赖 |
+| 1 | D1 | 修包：清 `package.json` 自依赖、`private`、files | **完成** | `npm pack --dry-run` 30 文件 / 253,204 字节（1.6.4）；无 `file:` 依赖 |
 | 2 | A2 | 消息级证据：`message_seq/message_id/sentence_no/valid_from/valid_to` | **完成** | 旧库迁移 + `audit` 显示 `消息 seq`；smoke 覆盖 |
 | 3 | B1 | `context_hub_doctor` 推荐档与自检 | **完成**（只读） | 工具/命令输出档位、缺口与可粘贴配置 |
 | 4 | B2 | 独立消息索引 + 消息聚合排序 + 窗口 | **完成** | `messages/messages_fts`；零记忆也能按原文召回；smoke 覆盖 |

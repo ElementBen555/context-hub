@@ -1,8 +1,22 @@
 # 变更记录
 
+## 1.6.4
+
+- 面板视觉增强（概览 / 记忆 / 观测 / 配置四分区）：KPI 指标带彩色图标、hero 渐变底；成本区新增缓存命中环；上下文构成表新增每段配色的分布条。
+- 记忆库「按类型」改为**甜甜圈图 + 图例**（决策/事实/偏好/任务/技能各自配色与占比）；范围仍用条形图。
+- 配置页顶部新增能力徽章（检索/改写/重排/压缩/水位/模式），一眼看到开关状态。
+- 活动分布按事件类型着色（召回蓝、抽取紫、改写绿、压缩红等）。
+- 修复离线预览的 SVG 属性命名（`strokeWidth` → `stroke-width`），此前截图里环形/甜甜圈显示过细。
+- `docs/panel-preview.png` 更新。
+
+## 1.6.3
+
+- 面板入口从输入框下方移到**左侧栏底部**（`sidebar.footer.action`，紧邻设置），显示为紧凑徽章「环 + 上下文百分比」，待审时带琥珀点；点击仍在页面中央打开卡片。
+- 会话 id 由隐藏的 composer 座位记录并共享给左栏（左栏是 root scope，拿不到 sessionId）；输入框下方不再显示胶囊。
+
 ## 1.6.2（2026-11-26）
 
-- **仓库内置 embed/node_modules**：`git clone` 后无需 `npm install`（3,163 个文件 / 462.7MB，含 Linux / macOS / Windows 的 onnxruntime 与 sharp 二进制）；vendored 的 `@huggingface/transformers` 把 `mistral3` 模型名字面量拆成 `"mistral" + "3"` 以通过 GitHub secret scanning（行为不变）。
+- **仓库内置 embed/node_modules**：`git clone` 后无需 `npm install`（3,163 个文件 / 462.7MB；onnxruntime 含 Linux x64/arm64、Win x64/arm64、macOS arm64，sharp 仅 Linux x64，其余平台需自行 `npm install`）；vendored 的 `@huggingface/transformers` 把 `mistral3` 模型名字面量拆成 `"mistral" + "3"` 以通过 GitHub secret scanning（行为不变）。
 - **分发包脚本**：新增 `scripts/pack.sh`（`git archive`），打出的 tgz 含 `embed/node_modules`；`npm pack` 仍强制排除 node_modules，发布含依赖的包请用 `npm run pack:dist`。
 - **离线模型包**：Release 附件 `dsh-context-hub-models-e5-q8.tar.gz`（87,652,818 字节，SHA-256 `06b9d4f1340138c15f5f71df6320faf20e6ed9eedfa9a3c8ff3db71ee1d1f6aa`），解压到 `embed/.cache/` 即可离线使用 e5-q8。
 - **文档**：README 增加「是否需要 npm install」对照表、离线模型包与 pack 脚本说明。
@@ -13,7 +27,7 @@
 - **P1 修复**：抽取调用加 60s 超时并释放 latch；`insert()` 的 upsert/supersede/连边包进事务；FTS 重建只在首次/升级时执行；`probe`/`explain`/工具/命令全部透传 sessionId；`invocation.signal` 可选链。
 - **面板与 embed**：替换提示不再预填被截断的 160 字文本；写操作加 in-flight 防重；HTTP 错误体透传；百分比 clamp；embed 服务校验 body/单条上限、超限 413、模型加载去重、监听错误与 SIGTERM 处理。
 - **文档与包**：README/spec/design/INSTALL/comparison 与 1.6.1 实现对齐（8/1800、6 轮冷却、抽取 2、0600、12 个工具、主题 token、embedding 默认空）；`engines.node >= 22.13`、`npm test`/`bench`/`stress`/`concurrency` 脚本、仓库地址修正；`.gitignore` 覆盖临时库与构建产物；仓库清理临时 DB/exports。
-- 打包：29 文件、247,806 字节、SHA-256 `2916ca3730fd3d3c9f4bb181174df2aeef6ccb739a9c694a3c206fc785dcc46a`。
+- 打包：29 文件、248,569 字节、SHA-256 `dfc08545a78f487c24462a339ad18d6e518fa75b25f6dc1b73fa6d1e2e18b935`。
 
 ## 1.6.0
 

@@ -1,8 +1,9 @@
 # 上下文中枢（dsh-context-hub）设计与使用文档
 
-> 版本 1.6.0 · 适用 DSH 0.2.3-alpha.2（已在本机 profile `web` 验证）
-> 本文档描述**当前实现（1.6.0）**；目标规格已冻结为 [spec.md](spec.md) v1.0，实现差距见 spec 第 8 节。
-> 已落地：P1 记忆准入/scope/TTL/衰减/冷却（0.2.0）、治理与观测命令（0.3.0）、近义召回（0.3.1）、召回兜底（0.4.1）、hub 压缩器（0.5.0）、客户端只读面板（0.6.0）、FTS5 混合检索与检索探针（0.7.0）、向量旁路与规模化（0.8.0）、压缩摘要入库与逐请求观测（0.9.0）、记忆关系与审核流（1.0.0）、召回基准/可逆还原/并发验证（1.1.0）、语义改写/水位接管（1.2.0）、本地 embed 服务（1.3.0）、面板图形化与四分区（1.3.1–1.5.5）、召回预算 8/1800 与分片抽取（1.5.6）、硬顶/超时、git 项目身份、消息级 unfold（1.6.0）。
+> 版本 1.6.4 · 适用 DSH 0.2.3-alpha.2（已在本机 profile `web` 验证）
+> 本文档描述**当前实现（1.6.4）**；目标规格已冻结为 [spec.md](spec.md) v1.0，实现差距见 spec 第 8 节。
+> 版本脉络：1.6.1 墓碑/会话隔离，1.6.2 vendored 依赖，1.6.3 左栏入口，1.6.4 面板图表；细节见 [CHANGELOG](../CHANGELOG.md)。
+> 已落地：P1 记忆准入/scope/TTL/衰减/冷却（0.2.0）、治理与观测命令（0.3.0）、近义召回（0.3.1）、召回兜底（0.4.1）、hub 压缩器（0.5.0）、客户端只读面板（0.6.0）、FTS5 混合检索与检索探针（0.7.0）、向量旁路与规模化（0.8.0）、压缩摘要入库与逐请求观测（0.9.0）、记忆关系与审核流（1.0.0）、召回基准/可逆还原/并发验证（1.1.0）、语义改写/水位接管（1.2.0）、本地 embed 服务（1.3.0）、面板图形化与四分区（1.3.1–1.5.5）、召回预算 8/1800 与分片抽取（1.5.6）、硬顶/超时、git 项目身份、消息级 unfold（1.6.0）、墓碑与会话隔离（1.6.1）、vendored 依赖（1.6.2）、面板左栏入口（1.6.3）、面板图表（1.6.4）。
 > 一个 host 侧 bundle，把「记忆、压缩、洞察」三件事装进同一个插件，数据落本地 SQLite，宿主侧零构建。
 
 ---
@@ -99,21 +100,21 @@ DSH 的上下文流水线本来就有三个环节，但分别散在不同插件�
 1. `session/event` 收到 `user/message`；
 2. 只处理 `data.source.kind === 'user'`（跳过 agent.inject、system 等自造消息，避免自我召回）；
 3. 文本 < 4 字符直接返回；
-4. `tokens()` 切词，`store.search()` 扫最近 500 条记忆；
+4. `expandQueryTokens()` 切词，`store.search()` 按 scope 各扫 `CANDIDATE_WINDOW = 800` 条候选；
 5. 过滤本会话已注入过的 id（`state.injected`）；
-6. 取 ≤8 条、总长 ≤1800 字符，组装一条 user 消息；
+6. 取 ≤ `recallMaxItems`（8）条，字符 ≤ `recallMaxChars`（1800）且 `estimateInjectTokens()` ≤ `recallMaxTokens`（1200），组装一条 user 消息；
 7. `agent.inject(message)` 排入下一 pre-step；`touch()` 累加使用次数；
 8. 注入内容是**一条独立 user 消息**，不改本轮用户原文、不进 system prompt、不产生新事件类型。
 
 ### 4.2 一轮结束 → 抽取 → 写库
 
 1. `turn/end` 触发，异步执行（不 await，不阻塞收尾）；
-2. 取 `state.extractedSeq → session.seq` 之间的事件，只挑 `user/message`、`assistant/message`；
-3. 拼成 `User:` / `Assistant:` 文本，截断到**最后** 8000 字符；
-4. 解析模型路由，`llm.stream()` 发一次性请求（`maxTokens: 600`，`purpose: 'context-hub:extract'`）；
+2. 从 `kv['extract:<sessionId>']`（或最后一条 extract 事件）恢复游标 `extractedSeq`，取游标到 `session.seq` 之间的事件，只挑 `user/message`、`assistant/message`；
+3. 从游标向前**累计到 ≤8000 字符**（`EXTRACT_MAX_INPUT`）：单条超长按剩余额度截断，跳过 `source.kind === 'context-hub'` 的注入消息；切片不足 80 字符只推进游标、不调模型；
+4. 解析模型路由，`llm.stream()` 发一次性请求（`maxTokens: 600`，`purpose: 'context-hub:extract'`，`AbortSignal.timeout(extractTimeoutMs)`）；每轮最多 `extractPassesPerTurn`（2）次增量切片；
 5. 累积 `text-delta`，用 `parseMemories()` 容错解析 JSON 数组；
-6. 逐条 `insert()`：`sha1(kind + 小写文本)` 去重，冲突只更新 kind；
-7. **成功后才**把 `extractedSeq` 推进到本轮末尾；失败则下轮重试（幂等）。
+6. 逐条 `insert()`：`hash = sha1(kind + '\0' + lower(text))` 去重；upsert 只刷新 status/置信/证据/消息定位/valid_*，不改 kind/text/tags/project；
+7. **成功后才**把 `extractedSeq` 与 `kv['extract:<sessionId>']` 同步推进；失败（含超时）只 warn，下轮重试（幂等）。
 
 ### 4.3 /context-hub compact → 原生压缩
 
@@ -130,24 +131,33 @@ ctx.get('compaction').compactNow(agent, signal, commandId)
 
 ### 5.1 记忆条目模型
 
-类型（kind）固定五种：`decision`（决策及理由）、`fact`（项目事实）、`preference`（用户偏好）、`task`（未完成任务）、`skill`（可复用做法）。非法 kind 落为 `fact`。
+类型（kind）固定六种：`decision`（决策及理由）、`fact`（项目事实）、`preference`（用户偏好）、`task`（未完成任务）、`skill`（可复用做法）、`summary`（压缩摘要入库）。非法 kind 落为 `fact`。
 
 抽取提示词要求每条 `text` 是**自包含的一句话**，保留精确路径、标识符、数值；最多 5 条；没有可记的就返回 `[]`。完整提示词见附录 A。
 
 ### 5.2 召回打分
 
 ```
-tokens(text) = 拉丁词（[a-z0-9_./:#-]{2,}） ∪ 中文二元组
+tokens(text) = 拉丁词（[a-z0-9_./:#-]{2,}） ∪ 中文二元组（查询/记忆两侧都过 expandQueryTokens，含 18 组中英近义）
 overlap      = |queryTokens ∩ memoryTokens|
 ratio        = overlap / |queryTokens|
-score        = overlap + ratio * 2 + (kind === 'preference' ? 1 : 0)
+lexicalBase  = overlap > 0 ? overlap + ratio*2 + (kind === 'preference' ? 1 : 0) : (FTS 命中 ? 0.8 : 0)
+ftsBoost     = FTS 命中 ? 0.3 + 0.7*(1 - 名次/命中总数) : 0
+emb          = 有向量且 cos ≥ embedding.minScore ? 0.5 + 0.5*cos : 0
+base         = lexicalBase + ftsBoost + emb
+score        = base × scopeWeight × decay × usage
 ```
 
-- 丢弃规则：`overlap === 1 且 queryTokens > 6` 视为噪声；
-- 候选池：`ORDER BY last_used DESC, created_at DESC LIMIT 500`；
+- `scopeWeight`：session 1.0 / project 0.8 / global 0.6；
+- `decay = exp(-λ·days)`：λ 为 session 0.10、project 0.01、global 0.002，`days` 按 `last_used || created_at` 起算；
+- `usage = 1 + 0.1 × min(uses, 10)`，命中后 `touch()` 累加；
+- **RRF 分支**：`embedding.fusion === 'rrf'` 且带查询向量时，词法/向量各自排名，`rrf = 1/(60+词法名次) + 1/(60+向量名次)`，`score = rrf × 1000 × scopeWeight × decay × usage`；
+- 丢弃规则：`overlap === 1 且 queryTokens > 6`、且无 FTS/向量命中，视为噪声；
+- 候选池：每个 scope 取 `ORDER BY last_used DESC, created_at DESC LIMIT CANDIDATE_WINDOW`（`CANDIDATE_WINDOW = 800`）；FTS 命中落在窗口外的按 id 补入（≤50 条），并仍过 scope 可见性过滤；
 - 排序：`score` 降序，同分按 `created_at` 降序；
-- 预算：最多 8 条、总字符 ≤1800（含表头与编号）；
-- 去重：同一会话内注入过的 id 不再注入（进程内 `WeakMap<Session, {injected:Set}>`）。
+- 预算：最多 `recallMaxItems`（8）条、总字符 ≤ `recallMaxChars`（1800），另受 `recallMaxTokens`（1200）硬顶；
+- 去重/冷却：同一会话注入过的 id 不再注入，且注入后冷却 `recallCooldownTurns`（6）轮；
+- session scope 记忆只在本会话可见（`session_id` 过滤）；project scope 命中本项目或 `project = ` 的记录；没有项目上下文（后台会话）时全库 project 记忆都参与。
 
 ### 5.3 存储
 
@@ -156,22 +166,64 @@ DDL（`memory.db`）：
 ```sql
 CREATE TABLE IF NOT EXISTS memories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  hash TEXT NOT NULL UNIQUE,        -- sha1(kind \0 lower(text))
-  kind TEXT NOT NULL,               -- decision|fact|preference|task|skill
+  hash TEXT NOT NULL UNIQUE,              -- sha1(kind \0 lower(text))
+  kind TEXT NOT NULL,                     -- decision|fact|preference|task|skill|summary
   text TEXT NOT NULL,
-  tags TEXT NOT NULL DEFAULT '',    -- 逗号分隔
-  project TEXT NOT NULL DEFAULT '', -- 写入时的 session.header.cwd
-  session_id TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL,      -- epoch ms
+  tags TEXT NOT NULL DEFAULT '',          -- 逗号分隔
+  project TEXT NOT NULL DEFAULT '',       -- projectOf()：默认 git:host/owner/repo
+  scope TEXT NOT NULL DEFAULT 'session',  -- session|project|global
+  session_id TEXT NOT NULL DEFAULT '',    -- session scope 的隔离键
+  confidence REAL NOT NULL DEFAULT 0.6,
+  source TEXT NOT NULL DEFAULT 'extracted', -- extracted|explicit|tool|compaction
+  evidence_seq TEXT NOT NULL DEFAULT '',  -- 抽取来源 seq 区间 "a-b"
+  message_id TEXT NOT NULL DEFAULT '',    -- <sessionId>#<seq>
+  message_seq INTEGER NOT NULL DEFAULT 0,
+  sentence_no INTEGER NOT NULL DEFAULT -1,
+  valid_from INTEGER NOT NULL DEFAULT 0,  -- epoch 秒
+  valid_to INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',  -- active|superseded|archived|deleted|pending
+  superseded_by INTEGER NOT NULL DEFAULT 0,
+  embedding TEXT NOT NULL DEFAULT '',     -- JSON 浮点数组；'' = 未取向量
+  embedding_model TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,            -- epoch 秒
   last_used INTEGER NOT NULL DEFAULT 0,
   uses INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS memories_kind ON memories(kind);
+CREATE INDEX IF NOT EXISTS memories_scope ON memories(scope, status);
+CREATE INDEX IF NOT EXISTS memories_status_scope ON memories(status, scope);
 ```
 
-写入用 `INSERT … ON CONFLICT(hash) DO UPDATE SET kind = excluded.kind RETURNING id`。
+> 旧库由 `migrate()` 逐列 `ALTER TABLE` 补齐 `scope/confidence/source/evidence_seq/message_id/message_seq/sentence_no/valid_from/valid_to/status/superseded_by/embedding/embedding_model`；顺序必须是建表 → 补列 → 建索引，否则旧库会因 `no such column` 整体降级为「无库」模式。
 
-> 注意：冲突时**只更新 kind**，不会刷新 text/tags/project。也就是说「同一句话在另一个项目里再次出现」不会改写归属。这是 0.1.0 的有意保守选择，避免一次抽取错误覆盖历史数据。
+同一 `open()` 内还会创建另外五张表：
+
+| 表 | 用途 |
+| --- | --- |
+| `messages(id, session_id, seq, role, project, text, created_at, last_used, uses, UNIQUE(session_id,seq))` | 独立消息索引；`indexSession()` 增量写入，供「原文窗口」召回与 FTS 补位。 |
+| `memory_links(id, from_id, to_id, relation, weight, created_at, UNIQUE(from_id,to_id,relation))` | 记忆关系，`relation` 目前只有 `related` / `supersedes`。 |
+| `kv(key, value)` | 小状态：抽取游标、project 缓存与迁移标记、FTS marker、接管模式与水位开关。 |
+| `context_events(id, kind, session_id, memory_ids, tokens, detail, created_at)` | 观测事件时间线（recall/extract/compact/request/…）；`request` 环形裁剪保留最近 200 条。 |
+| `messages_fts`（virtual FTS5，`content='messages'`，trigram） | 消息级全文检索，由触发器与 `messages` 同步。 |
+
+`memories_fts`（`content='memories'`，trigram）同样在 `open()` 内创建；详见 §15。库文件在 `open()` 末尾 `chmod 0600`。
+
+写入用：
+
+```sql
+INSERT INTO memories (hash, kind, text, tags, project, scope, session_id, confidence, source,
+                      evidence_seq, message_id, message_seq, sentence_no, valid_from, valid_to,
+                      status, created_at, last_used)
+VALUES (…, 0)
+ON CONFLICT(hash) DO UPDATE SET
+  status = excluded.status, superseded_by = 0, confidence = excluded.confidence,
+  evidence_seq = excluded.evidence_seq, message_id = excluded.message_id,
+  message_seq = excluded.message_seq, sentence_no = excluded.sentence_no,
+  valid_from = excluded.valid_from, valid_to = 0
+RETURNING id
+```
+
+> 冲突时**不更新** `kind/text/tags/project`：同一句话的归属不会被改写。`status = excluded.status` 只用于把 `archived` 重新激活；`deleted/rejected/superseded` 的旧条目在查重阶段以 `reason: 'tombstoned'` 直接拒绝，不会被同文“复活”（1.6.1）。
 
 ### 5.4 历史检索（折叠区补位）
 
@@ -191,18 +243,38 @@ CREATE INDEX IF NOT EXISTS memories_kind ON memories(kind);
 | `压力 P / 窗口 W` | `tokenMeter.contextPressure(session)` | 压力值与该模型上下文窗口 |
 | `已折叠 N 个区间` | 数 `compaction/summary` 事件 | 历史压缩次数 |
 | `事件 N 条` | `session.seq` | 会话日志总事件数 |
-| `记忆 N 条（kind…）` | `GROUP BY kind` | 记忆库构成 |
+| `记忆：active N（session/project/global；kind N），superseded N…` | `counts()` 按 status/scope/kind 聚合 | 记忆库构成；pending >0 时提示 `review` |
+| `构成：用户 … / 助手 …` | `surfaceBreakdown(session, measurement)` | surface 节点按事件类型拆分；输出预留单列 |
+| `水位：N%（参考 70% 触发 / 60% 目标）` | `contextPressure` ÷ `contextWindow` | 仅供参照，真实阈值由 profile 的压缩器配置决定 |
 | `@ 路径` | `store.file` | 实际数据库位置 |
 
 ### 5.6 工具与命令
 
-| 名称 | 参数 | 输出 | 说明 |
-| --- | --- | --- | --- |
-| `context_hub_search` | `query` 必填，`limit` 默认 5（上限 20） | 文本列表 | 检索记忆 |
-| `context_hub_remember` | `text` 必填，`kind` 可选，`tags` 逗号分隔 | `已记住（#id）` | 手动写记忆，记录当前 cwd/session |
-| `context_hub_history` | `query` 必填，`limit` 默认 5（上限 20） | `seq / role / 片段` | 检索完整会话日志 |
-| `context_hub_status` | 无 | 见 5.5 | 只读洞察 |
-| `/context-hub` | `status`、`search <q>`、`remember <text>`、`history <q>`、`compact` | 文本 | 命令版入口；`compact` 调原生压缩 |
+1.6.4 注册 12 个工具（全部在 `defineTools()` 里按 `ctx.tools.register` 直接声明）：
+
+| 名称 | 参数要点 | 输出 |
+| --- | --- | --- |
+| `context_hub_search` | `query` 必填；`limit` 默认 5（1–20）；`all` 跨项目 | `- [#id kind scope conf N] text（tags: …）` |
+| `context_hub_remember` | `text` 必填；`kind`（默认 fact）、`tags` 逗号分隔、`scope`（按 kind 推导） | `已记住（#id，scope，置信 N）` / 已存在 / 被更强证据拦下 |
+| `context_hub_history` | `query` 必填；`limit` 默认 5（1–20） | `- seq N [role] 前 300 字` |
+| `context_hub_status` | 无 | 见 §5.5 |
+| `context_hub_explain` | `query` 必填 | 候选打分明细 + 未入选原因 |
+| `context_hub_log` | `limit` 默认 10（1–50） | 观测事件倒序 |
+| `context_hub_abtest` | `messages` 默认 30（5–100） | 7 段 vs 8 段压缩 A/B |
+| `context_hub_probe` | `limit` 默认 10（1–50） | `{total,hits,rate,cases}` |
+| `context_hub_restore` | `start` 必填；`end` 默认 start+40；`maxChars` 默认 4000（≤12000） | 原文经 `exec.deferContext` 注入下一步 |
+| `context_hub_decompress` | `id` 或 `start`/`end`；`end` 默认 start+40；`maxChars` 默认 8000（≤20000） | 折叠块原文回填 |
+| `context_hub_unfold` | `id` 或 `start`/`end`；`steps` 默认 3；`maxChars` 默认 8000 | 后续 N 步用原文临时替代摘要 |
+| `context_hub_doctor` | 无 | FTS5/向量/改写/重排/压缩器/水位自检 + 档位建议 |
+
+命令 `/context-hub` 共 **21 个子命令**（缺省参数等同 `status`）：
+
+| 分组 | 子命令 |
+| --- | --- |
+| 只读 | `status`（缺省）、`doctor`、`search <q>`、`history <q>`、`explain <q>`、`probe [n]`、`log [n]`、`audit <id>` |
+| 写入/治理 | `remember <text>`、`forget <id>`、`supersede <id> <新内容>`、`review [approve\|reject] <id>`（无参数列待审）、`export` |
+| 压缩 | `compact`、`compactor <hub\|native>`、`watermark [on\|off]`、`mode [observe\|assist\|takeover\|full]` |
+| 还原/向量 | `restore <start> [end]`、`decompress [id\|start] [end]`、`unfold [id:<n>\|start] [end] [steps:<n>]`、`reembed` |
 
 ---
 
@@ -243,16 +315,27 @@ JsonSchemaError: unsupported JSON schema: schema.properties.text.required is not
 代码内常量（改需重载）：
 
 ```js
-RECALL_MAX_CHARS = 1800   // 单次召回注入的字符预算（可配置）
-RECALL_MAX_ITEMS = 8      // 单次召回条数
-RECALL_MAX_TOKENS = 1200  // 单次注入 token 硬顶（中文按 ~1.6 字符/token 估）
-RECALL_TIMEOUT_MS = 4000  // 召回总时限
-EXTRACT_MAX_INPUT = 8000  // 抽取时对话切片上限
-EXTRACT_TIMEOUT_MS = 60000// 单次抽取超时，超时释放 latch
-maxTokens: 600            // 抽取输出上限
+EXTRACT_MAX_INPUT = 8000   // 抽取切片上限（每次增量 ≤8000 字符）
+CANDIDATE_WINDOW  = 800    // 每个 scope 的召回候选池
+maxTokens: 600             // 抽取输出上限（写死在 llm.stream 调用里）
 ```
 
-> 0.1.0 没有 Config schema；要可视化配置需要导出 `Config`（Schemastery），属于路线图。
+可配置项在 `defaults` 里声明，`resolveConfig()` 合并 profile `config` 后逐项 clamp：
+
+| 配置项 | 默认 | 允许范围 | 说明 |
+| --- | --- | --- | --- |
+| `recallMaxChars` | 1800 | 200–8000 | 单次召回注入字符预算 |
+| `recallMaxItems` | 8 | 1–20 | 单次召回最多条数 |
+| `recallMaxTokens` | 1200 | 100–4000 | 单次注入 token 硬顶（按 ~1.6 字符/token 估） |
+| `recallTimeoutMs` | 4000 | 0–20000 | 召回总时限，0 表示不设限 |
+| `extractPassesPerTurn` | 2 | 1–10 | 每轮最多增量抽取次数（1.5.6） |
+| `extractTimeoutMs` | 60000 | 5000–300000 | 单次抽取超时，超时释放 latch |
+
+其余默认项（完整列表见 `src/index.js` 的 `defaults`）：`recallCooldownTurns=6`、`sessionTtlDays=7`、`projectTtlDays=90`、`globalTtlDays=0`、`capacityPerScope=5000`、`admissionThreshold=0.6`、`conflictPolicy='evidence'`、`projectIdentity='git'`、`compactor='native'`、`reviewPending=false`，以及 `embedding` / `rewrite` / `rerank` / `watermark` / `unfold` / `mode` 分组。
+
+覆盖顺序：`defaults` < profile 的 `config` 字段 < 环境变量（`DSH_CONTEXT_HUB_RECALL_CHARS`、`DSH_CONTEXT_HUB_RECALL_ITEMS`、`DSH_CONTEXT_HUB_RECALL_TOKENS`、`DSH_CONTEXT_HUB_RECALL_TIMEOUT_MS`、`DSH_CONTEXT_HUB_EXTRACT_PASSES`、`DSH_CONTEXT_HUB_EXTRACT_TIMEOUT_MS`）。越界值被 clamp 到上表范围，非法值回落默认；改完热重载插件即可生效，无需重启 DSH。`/context-hub mode|watermark|compactor` 的运行时开关写入 `kv`，重启后沿用，也不需要改配置。
+
+> 1.6.4 仍未导出 `Config`（Schemastery），所以 DSH 设置页渲染不出表单；面板「配置」页是自绘的只读快照 + 上述几个运行时开关。导出 schema 在路线图里。
 
 ---
 
@@ -285,7 +368,7 @@ context-hub/
 | 项 | 结果 |
 | --- | --- |
 | 激活 | `application: applied`，`warnings: []` |
-| 工具可见性 | 本会话动态出现 4 个 `context_hub_*` 工具 |
+| 工具可见性 | 0.1.0 历史记录：本会话动态出现 4 个 `context_hub_*` 工具（1.6.4 固定注册 12 个，见 §5.6） |
 | status | `surface 244372 tokens / 合计 260626 tokens（304 个节点）`；`压力 71410 / 窗口 1048576`；`事件 1106 条` |
 | 记忆闭环 | `remember` 写入 #1；一轮结束后自动抽取使库从 1 条增至 3 条（fact 2，preference 1） |
 | 折叠区检索 | 在 1106 条事件中定位到最早的 `seq 8 [user] 安装dshmarket` |
@@ -323,30 +406,33 @@ context-hub/
 
 ---
 
-## 12. 已知限制
+## 12. 已知限制（1.6.4）
 
-1. **关键词召回**：同义改写、跨语言表述召回率有限；无向量、无 FTS5。
-2. **无分层加权**：`project` 字段存了 `cwd`，但打分未使用；跨项目记忆平权参与竞争。
-3. **无时效衰减**：旧决策与新决策同权，冲突不会自动消解；`uses` 只增不减。
-4. **upsert 不刷新正文**：同 hash 只更新 kind，标签/项目/文本不更新。
-5. **抽取有成本**：每轮一次辅助 LLM 调用（`maxTokens: 600`），长会话可考虑改为每 N 轮或按 token 增量。
-6. **单进程**：`injected`、`extractedSeq` 在内存，同一 SQLite 被多个 DSH 实例共用时只有库是共享的。
-7. **history 线性扫描**：无倒排索引，超大日志（>1 万事件）会变慢。
-8. **无 UI**：只有命令与工具；`README` 里的面板仍是路线图。
+1. **单进程状态**：`injected`、`extractedSeq`、`projectKeyCache` 都在进程内；多个 DSH 实例共用一个库时只有 SQLite 数据共享，冷却/去重/抽取游标各算各的。
+2. **history 仍是线性扫描**：`searchHistory()` 从 seq 0 逐条 `eventAt()`，不使用 `messages`/`messages_fts` 索引；万级以上事件会明显变慢。
+3. **跨语言召回弱**：不开向量时，中文查询命中英文表述（及反向）主要靠 18 组 `ALIAS_GROUPS`，覆盖有限；英文词形变化靠 trigram FTS 部分缓解。
+4. **关系图无向且关系类型少**：`memory_links` 只连 `related`（相似度 ≥0.4）与 `supersedes`，没有图遍历、没有 PageRank；邻居扩展只补 1 跳。
+5. **抽取质量取决于模型**：`parseMemories()` 只做容错解析，不校验事实正确性；模型返回空/非 JSON 时本轮静默跳过。
+6. **向量能力要本地依赖与模型**：`embedding.enabled` 需要 OpenAI 兼容端点；内置 embed 服务依赖 vendored 的 `embed/node_modules`（1.6.2）与模型文件，首次加载慢、体积大。
+7. **面板是 10 秒轮询快照**：不是推送/实时流；关闭面板即停表，后台变化要等下次刷新。
+8. **没有导出 `Config` schema**：DSH 设置页无法渲染表单，配置只能改 profile `config` 或环境变量后热重载。
 
 ---
 
 ## 13. 路线图
 
-| 优先级 | 事项 | 验收标准 |
+以下只剩**确实没做**的项；已实现项标注版本，不再挂在表里。
+
+| 优先级 | 事项 | 现状 / 验收标准 |
 | --- | --- | --- |
-| P1 | 混合检索（FTS5 旁路，关键词兜底） | 同义改写查询召回率提升，且零依赖降级可回退 |
-| P1 | 分层记忆（会话/项目/全局）+ 项目加权 | 同项目记忆排序高于跨项目；可配置权重 |
-| P1 | 时效衰减与冲突标记 | 新旧冲突条目在 `search` 输出中标注 `superseded` 而非静默合并 |
-| P2 | 客户端面板（`window.__ModuleLoader__` + 右侧栏 slot） | 可视化记忆库、注入记录、折叠历史；只读优先 |
-| P2 | 记忆感知压缩 | 用 `summarize()` 钩子把高价值记忆编进摘要骨架——**真正的差异化点** |
-| P2 | history 倒排索引 | 万级事件检索保持在 50ms 内 |
-| P3 | 导入/导出、记忆编辑与删除、`Config` schema | 不碰 SQL 也能治理记忆 |
+| P1 | `Config` schema（Schemastery） | 未导出；导出后 DSH 设置页可直接渲染、校验并持久化 |
+| P1 | 记忆导入 | 只有 `export`（v4 快照），没有 `import`；目标：可回灌 `memories` / `memory_links` / `messages` |
+| P2 | 多进程协调 | 当前只有 WAL + `busy_timeout=5000`；目标：跨实例共享冷却/抽取游标或加锁 |
+| P2 | history 倒排索引 | 当前 O(事件数)；目标：复用 `messages_fts` 或建 seq 倒排，万级 <50ms |
+| P2 | 面板 locale | 文案仍硬编码中文；目标：接 `@deepseek-ai/dsh-client-locale` |
+| P3 | 英文 eval 提升 | recall-bench 词法基线 top-6 仅 4/30（13.3%）；目标：改写/向量/别名覆盖把英文改写召回拉高 |
+
+已在早期版本落地的项（保留在此便于追溯）：FTS5 混合检索（0.7.0）、向量旁路（0.8.0）、分层加权 + 时效衰减 + 冲突消解（0.2.0）、面板（0.6.0，1.6.3 迁入左栏、1.6.4 图表）、记忆关系与审核流（1.0.0）、restore/unfold/decompress（1.1.0/1.6.0）、本地 embed 服务（1.3.0）、git 项目身份（1.6.0）。
 
 ---
 
@@ -360,36 +446,58 @@ Output ONLY a JSON array (no prose, no code fences). Each item:
 
 Rules:
 - Only durable knowledge: decisions and their rationale, project facts, user preferences, open tasks, reusable procedures.
+- Each text must stand alone: no pronouns, no "this file"/"the above"; name the subject explicitly.
 - Skip greetings, transient status, and anything only meaningful inside this conversation.
 - At most 5 items; return [] when nothing is worth remembering.
 ```
 
 发送时在末尾追加 `\n\n---\n` + 对话切片。
 
-## 附录 B：召回注入消息（原文）
+## 附录 B：召回注入消息（原文格式）
+
+`recallMessage()` 的头部固定为：
 
 ```
 以下是长期记忆里可能与当前任务相关的条目（由 context-hub 自动召回，仅供参考、可能过时；与当前对话冲突时以当前对话为准）：
-- [#12 decision] ……
-- [#7 preference] ……
 ```
 
-整段截断到 `recallMaxChars`（默认 1800）字符。
+随后是两类条目（命中消息时先出「原文窗口」，事实条目按命中消息分组，缩进两格）：
+
+```
+- 原文窗口 seq 102 [user]：……（消息级命中，整句窗口 ≤360 字符）
+- 原文窗口 seq 88：……
+  · [#12 decision project 2026-11-26] ……
+- [#7 preference global 2026-11-20] ……
+```
+
+即：消息级命中 `- 原文窗口 seq N [role]：text`；事实条目 `- [#id kind scope YYYY-MM-DD] text`，若带 `message_seq` 则先写 `- 原文窗口 seq N：window`、再以 `  · [#…]` 缩进列出该窗口命中的条目。
+
+整段最后再截断到 `min(recallMaxChars, floor(recallMaxTokens × 1.6))`：默认 `min(1800, 1200×1.6=1920)` = 1800 字符。注意选条目阶段已按「字符 + token 估算」双预算逐条过滤，这一步只是兜底截断。
 
 ## 附录 C：关键源码位置
 
+行号按 1.6.4（`src/index.js` 共 4027 行）核对；**行号随版本漂移，以函数名为准**。
+
 | 逻辑 | 位置 |
 | --- | --- |
-| 入口与事件挂载 | `src/index.js:538-564` |
-| 召回 | `src/index.js:216-246` |
-| 抽取与路由解析 | `src/index.js:267-316` |
-| 存储与打分 | `src/index.js:80-167` |
-| 工具注册 | `src/index.js:379-470` |
-| 命令注册 | `src/index.js:471-532` |
-| 常量 | `src/index.js:24-27` |
+| 常量（KIND_VALUES / EXTRACT_MAX_INPUT / CANDIDATE_WINDOW） | `src/index.js:26-34` |
+| `defaults` 配置对象 | `src/index.js:37-81` |
+| `resolveConfig()`（clamp + env 覆盖） | `src/index.js:138-238` |
+| `MemoryStore` 类 | `src/index.js:563` |
+| `open()`（DDL / migrate / 索引） | `src/index.js:596-710` |
+| `insert()`（hash + upsert 语义） | `src/index.js:837-905` |
+| `rank()`（召回打分 / RRF / 衰减） | `src/index.js:1060-1205` |
+| `searchHistory()`（线性扫描） | `src/index.js:1578-1597` |
+| `recallMessage()`（注入格式） | `src/index.js:1825-1867` |
+| `maybeRecall()` | `src/index.js:1949-2120` |
+| `extractMemories()` | `src/index.js:2540-2618` |
+| `installStatusRoute()`（4 条路由） | `src/index.js:3029-3160` |
+| `defineTools()`（12 个工具） | `src/index.js:3241-3578` |
+| `defineCommand()`（21 个子命令） | `src/index.js:3579-3878` |
+| `apply()`（入口与事件挂载） | `src/index.js:3951-4027` |
 
 
-## 11. 0.3.0 增量（P2 主体）
+## 22. 0.3.0 增量（P2 主体）
 
 - **治理**：`forget <id>` 软删除（`status='deleted'`，召回与检索不再命中，审计链保留）；`supersede <id> <新内容>` 写新条目并把旧条目置 `superseded`、`superseded_by` 指向新条目；`audit <id>` 打印状态/置信/来源/证据 seq/时间/使用次数，并沿 `superseded_by` 展开最多 5 级后继。
 - **召回调试**：`rank()` 返回逐项打分明细 `parts {overlap, ratio, base, weight, decay, usage, fts?}`；`explain <query>` 输出 50 条候选（含非 active）与每条「入选/跳过（已注入/冷却/条数预算/字符预算/状态）」原因，命中 FTS 时标注「FTS 第 n 位」。
@@ -407,14 +515,14 @@ Rules:
 - 诊断：`context_hub_explain` 的「词元 / 覆盖率」会反映扩展后的查询词元数，便于判断是扩展过头还是没扩到。
 
 
-## 12. 召回诊断与兜底（0.4.1）
+## 23. 召回诊断与兜底（0.4.1）
 
 - `maybeRecall` 记录三种结果：命中（`recall`，detail 前缀 `query:` 或 `context:`）、零命中（`recall-miss`）。
 - 严格匹配零命中时，用「当前消息之前最近的助手/用户文本（≤600 字符）」再检索一次，解决「继续/做 3」这类短句与记忆零词面重叠的问题。
 - 记忆侧也做近义扩展：`rank()` 对 `text + tags` 调用 `expandQueryTokens()`，与查询侧对称，`compact ↔ 压缩` 双向可通。
 - `status` 活动行新增「召回未命中 N 次」，能区分「没触发」与「触发了但没命中」。
 
-## 13. hub 压缩器（0.5.0）
+## 24. hub 压缩器（0.5.0）
 
 - `compactor: native|hub`；hub 在 `ctx.inject(['compaction'])` 里包装实例的 `summarize()`，保存原方法并注册卸载。
 - hub 摘要：8 段（含 `## 用户约束`）、maxTokens 3000、注入 ≤5 条记忆、`purpose: 'compaction'`；返回 `{summary, rawOutput, llmStreamCall: true, provider, model, maxTokens}`。
@@ -422,15 +530,20 @@ Rules:
 - 运行时切换：`/context-hub compactor hub|native`；`status` 配置行显示档位。
 - 为什么不是独立 bundle：见 [docs/compactor.md](compactor.md)（模块解析、双 compaction 服务、单插件三个约束）。
 
-## 14. 客户端面板（0.6.0）
+## 14. 客户端面板（0.6.0 → 1.6.3 左栏入口）
 
-- 形态：`conversation.composer.dock`（session scope）里的一枚胶囊，点击用 `createPortal` 展开为四分区面板（概览/记忆/观测/配置）；上下文只读，面板可执行治理（forget/supersede/review）与开关（水位/压缩器/接管模式）。
-- 数据通道：宿主 `installStatusRoute()` 用 `ctx.inject(['connection'])` 注册 `GET /api/context-hub.status`（`connection.fetch.register`，`requestBody: 'buffered'`），鉴权由 connection 层负责（未认证 401）。处理函数按 `sessionId` 取 `sessions.get()`，复用 `statusSnapshot()`：tokenMeter 测量、`surfaceBreakdown()` 构成、`foldedStats()`、记忆 `counts()`/`recentActive()`、`eventCounts()`、压缩器状态与配置。
-- 客户端：手写 `window.__ModuleLoader__.load({id:'dsh-context-hub', factory(require){…}})`，只 require `react` / `react-dom`；`apply(ctx)` 里 `ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({id:'context-hub-status', order:2}, Pill))`；`package.json` 增加 `dsh.client {platform:'web', immediately:true, inject:['@deepseek-ai/dsh-client-locale']}` 与 `exports['./client']`。
-- 胶囊文案：`上下文中枢 · 上下文 N% · 记忆 M`；N 取 `pressureTokens / contextWindow`，M 取 active 数。加载失败时显示「不可用」且面板给出错误文本。
-- 面板刷新：打开后 10 秒轮询 + 手动刷新；关闭即停表并 abort 请求。样式内联但全部取 DSH 主题 token（`--dsw-alias-*`，带兜底值），深色/浅色自动适配。
+- 入口（1.6.3 起）：不再是输入框下方胶囊。左侧栏底部 `sidebar.footer.action` 注册紧凑徽章（环形进度 + 上下文百分比，有待审记忆时带琥珀点）；点击用 `createPortal` 在页面中央展开四分区面板（概览/记忆/观测/配置）。上下文只读，治理（forget/supersede/review）与开关（水位/压缩器/接管模式）可写。
+- 会话 id 传递：左栏是 root scope、拿不到 sessionId，所以仍在 `conversation.composer.dock` 注册一个隐藏的 `ComposerAnchor`，只负责记住当前 sessionId 并广播给左栏徽章；输入框下方不再显示任何 UI。
+- 数据通道：宿主 `installStatusRoute()` 在 `ctx.inject(['connection'])` 里用 `connection.fetch.register` 注册 **4 条**路由（`requestBody: 'buffered'`），鉴权由 connection 层负责（未认证 401）：
+  - `GET /api/context-hub.status?sessionId=…` → `statusSnapshot()`：tokenMeter 测量、`surfaceBreakdown()` 构成、`foldedStats()`、`counts()`/`recentActive()`、`eventCounts()`、压缩器/水位/模式；
+  - `POST /api/context-hub.watermark` `{enabled}`；
+  - `POST /api/context-hub.review` `{action:'approve'|'reject', id}`；
+  - `POST /api/context-hub.action` `{action:'forget'|'supersede'|'compactor'|'mode', id?, text?, value?}`。
+- 客户端：手写 `window.__ModuleLoader__.load({id:'dsh-context-hub', factory(require){…}})`，只 require `react` / `react-dom`；`apply(ctx)` 里向 `sidebar.footer.action`（`context-hub-status`，order 2）与 `conversation.composer.dock`（`context-hub-session`，order 2）各 `ctx.slots.inject(...)` + `register(...)`；`package.json` 的 `dsh.client {platform:'web', immediately:true, inject:['@deepseek-ai/dsh-client-locale']}` 与 `exports['./client']` 负责加载。
+- 视觉：1.3.1–1.5.5 面板图形化；1.6.4 加 KPI 图标、hero 渐变、缓存命中环、构成分布条、按类型甜甜圈、配置能力徽章、活动类型着色（纯 SVG，离线预览同样渲染）。
+- 刷新：打开后 10 秒轮询 + 手动刷新；关闭即停表并 abort 请求。样式内联但全部取 DSH 主题 token（`--dsw-alias-*`，带兜底值），深色/浅色自动适配。
 - 边界：不写会话日志、不触发压缩；治理写操作只改插件自有 SQLite。客户端文案暂未接 locale 服务（文案仍硬编码中文）。
-- 验证：`node test-smoke.mjs` 断言假 ctx 下路由注册与 JSON 形状（`route: 1400 4 hub`）；线上 `curl` 路由返回 401，证明注册生效、鉴权在工作；浏览器面板需刷新页面后可见。
+- 验证：`node test-smoke.mjs` 断言假 ctx 下 4 条路由注册与 JSON 形状（0.6.0 冒烟日志里那句 `route: 1400 4 hub` 属历史格式，现以路由表断言为准）；线上 `curl` 路由返回 401，证明注册生效、鉴权在工作；浏览器面板需刷新页面后可见。
 
 ## 15. FTS5 混合检索与检索探针（0.7.0）
 

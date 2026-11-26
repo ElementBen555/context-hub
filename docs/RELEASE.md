@@ -1,6 +1,6 @@
 # 发布清单（D2）
 
-> 状态：**阻塞**。本机没有可用的 npm 登录账号；包已修好、tgz 已生成，账号到位后按本文执行即可。
+> 状态：**1.6.4 已提交、待打包/推送**。npm 账号到位后按本文执行发布。
 
 ## 0. 前置
 
@@ -16,27 +16,39 @@ npm view dsh-context-hub version   # 期望 404（未占用）
 
 ## 1. 本地校验
 
+在仓库根目录执行：
+
 ```bash
-cd package
-npm_config_cache=$PWD/.npm-cache npm pack --dry-run
+npm_config_cache=$PWD/.npm-cache npm pack --dry-run   # slim registry 包
 node test-smoke.mjs
 node scripts/eval/recall.mjs --dataset scripts/eval/zh-holdout.json
 ```
 
 检查：
 
-- tarball 文件数、大小合理，且包含 `src/`、`client/`、`cordis.patch.yml`、`locale/`、`icon.svg`、`docs/`、`scripts/eval/`。
+- `npm pack --dry-run` 为 30 文件 / 253,204 字节（1.6.4 实测），且包含 `src/`、`client/`、`cordis.patch.yml`、`locale/`、`icon.svg`、`docs/`、`scripts/eval/`。
+- **`npm pack` 只产 slim registry 包**（强制排除 `node_modules`）；含 `embed/node_modules` 的分发包必须用 `npm run pack:dist`（见 §2）。
 - `package.json` 的 `dependencies` 为空或只含真实外部依赖，没有 `file:../dist/*.tgz`。
 - `node test-smoke.mjs` 输出 `SMOKE OK`。
 
 ## 2. 打包
 
+在仓库根目录执行：
+
 ```bash
-npm_config_cache=$PWD/.npm-cache npm pack --pack-destination ..
-# 产物：../dsh-context-hub-<version>.tgz
+npm run pack:dist          # 等价于 bash scripts/pack.sh
+# 产物：dist/dsh-context-hub-<version>.tgz（内含 embed/node_modules）
 ```
 
-记录文件数与 SHA-256，写入工作区根的 `dist/INSTALL.md`（若使用 `dist/` 约定）。
+`pack.sh` 基于 `git archive HEAD`，**先提交再打包**，否则会把旧提交的内容打进新版本号。校验产物：
+
+```bash
+tar -tzf dist/dsh-context-hub-<version>.tgz | grep -c 'embed/node_modules/'   # 必须 > 0
+tar -tzf dist/dsh-context-hub-<version>.tgz | grep -vc '/$'                  # 文件总数
+sha256sum dist/dsh-context-hub-<version>.tgz
+```
+
+1.6.2 基线：3,196 文件 / 157,534,812 字节。记录文件数与 SHA-256，写入 `dist/INSTALL.md`。
 
 ## 3. 发布
 
