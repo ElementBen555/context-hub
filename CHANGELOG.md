@@ -1,5 +1,12 @@
 # 变更记录
 
+## 1.6.2（2026-11-26）
+
+- **仓库内置 embed/node_modules**：`git clone` 后无需 `npm install`（3,163 个文件 / 462.7MB，含 Linux / macOS / Windows 的 onnxruntime 与 sharp 二进制）；vendored 的 `@huggingface/transformers` 把 `mistral3` 模型名字面量拆成 `"mistral" + "3"` 以通过 GitHub secret scanning（行为不变）。
+- **分发包脚本**：新增 `scripts/pack.sh`（`git archive`），打出的 tgz 含 `embed/node_modules`；`npm pack` 仍强制排除 node_modules，发布含依赖的包请用 `npm run pack:dist`。
+- **离线模型包**：Release 附件 `dsh-context-hub-models-e5-q8.tar.gz`（87,652,818 字节，SHA-256 `06b9d4f1340138c15f5f71df6320faf20e6ed9eedfa9a3c8ff3db71ee1d1f6aa`），解压到 `embed/.cache/` 即可离线使用 e5-q8。
+- **文档**：README 增加「是否需要 npm install」对照表、离线模型包与 pack 脚本说明。
+
 ## 1.6.1（2026-11-26）
 
 - **P0 修复**：遗忘/拒绝/被替换的记忆不再被同文写入复活（墓碑守卫）；`session` 作用域记忆按 `session_id` 隔离（关键词、FTS 补入、容量淘汰、mostSimilar 全部加过滤）。

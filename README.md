@@ -189,6 +189,23 @@ cordis.patch.yml 里给条目加 `config:` 即可，例如：
 
 > **仓库已内置 `embed/node_modules/`**（约 475MB，含 Linux / macOS / Windows 的 onnxruntime 与 sharp 二进制）：从本仓库 clone 后无需再 `npm install`。模型权重不入库（`embed/.cache/`，当前配置的 e5-q8 约 135MB），首次启动自动下载，或把已有 `.cache` 拷过去离线使用。若安装的是 npm 分发包（不含 `node_modules`），才需要下面这一步。
 >
+**离线模型包**：Release 附件 `dsh-context-hub-models-e5-q8.tar.gz`（约 84MB）是当前在用的 `multilingual-e5-small` q8 权重，解压到缓存目录即可离线使用：
+
+```bash
+tar -xzf dsh-context-hub-models-e5-q8.tar.gz -C embed/.cache
+# 得到 embed/.cache/Xenova/multilingual-e5-small/
+```
+
+**需要 `npm install` 吗？**
+
+| 获取方式 | 含 `embed/node_modules/` | 还要 `npm install` 吗 |
+| --- | --- | --- |
+| `git clone` 本仓库 | 是（已入仓） | 不需要 |
+| `scripts/pack.sh` 打出的 tgz（1.6.2 起） | 是 | 不需要 |
+| npm 包 / 早期不含依赖的 tgz | 否 | 需要：`cd embed && npm install --ignore-scripts` |
+
+> `npm pack` / `npm publish` 会强制排除 `node_modules`，所以「含依赖的分发包」请用 `scripts/pack.sh`（`git archive`），不要用 `npm pack`。
+
 > 为了让仓库通过 GitHub 的 secret scanning，vendored 的 `@huggingface/transformers` 里 `mistral3` 这个模型名字面量被拆成了 `"mistral" + "3"`（仅影响该模型名的写法，e5/bge 等不受影响）；其余文件与 npm 原包一致。
 
 ```bash

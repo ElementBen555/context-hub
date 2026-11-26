@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-hub",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "private": false,
   "type": "module",
   "description": "SQLite 记忆 + 关键词/FTS5/可选向量 + LLM 改写/重排 + 可选的 8 段压缩器与水位接管 + Web 面板",
@@ -30,7 +30,8 @@
     "embed/package.json",
     "embed/start.sh",
     "embed/stop.sh",
-    "embed/README.md"
+    "embed/README.md",
+    "embed/node_modules"
   ],
   "dsh": {
     "bundle": {
@@ -70,6 +71,7 @@
     "concurrency": "node scripts/concurrency.mjs",
     "bench": "node scripts/recall-bench.mjs",
     "eval": "node scripts/eval/recall.mjs",
-    "prepack": "chmod +x embed/start.sh embed/stop.sh"
+    "prepack": "chmod +x embed/start.sh embed/stop.sh",
+    "pack:dist": "bash scripts/pack.sh"
   }
 }
