@@ -1,6 +1,5 @@
 node_modules/
 embed/.cache/
-embed/node_modules/
 embed/.venv/
 embed/*.log
 embed/*.pid
