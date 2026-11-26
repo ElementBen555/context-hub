@@ -247,7 +247,7 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 ### O6 入口与导出
 
 - `/context-hub status`：文本版六段摘要。
-- 面板（已实现，0.6.0 起，O7）：左栏底部徽章打开弹层，支持展开与筛选，并提供治理与开关的写操作。
+- 面板（已实现，0.6.0 起，O7）：左栏底部徽章打开弹层，支持展开与筛选；写操作包括治理（遗忘/替换/审核）、开关（水位/压缩器/接管模式）与配置（召回预算、TTL、抽取次数、冲突策略、向量/改写/重排开关），配置经 `action: config` 白名单校验并写入 `kv`，重启沿用。
 - 导出：JSON 事件流 + 记忆库快照（显式操作，含隐私提示）。
 
 ---
@@ -329,7 +329,7 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 | O3 会话视图 | 命令 `log` + 工具 `context_hub_log` 时间线 | 已实现（0.3.0） | — |
 | O5 召回调试 | 命令 `explain` + 工具 `context_hub_explain` 输出候选与打分明细、跳过原因 | 已实现（0.3.0） | — |
 | O6 导出 | `export` 写 JSON 快照（0600） | 已实现（0.3.0） | — |
-| O7 面板 | 左栏底部徽章（圆环 + 百分比，待审带琥珀点）+ 四分区弹层（KPI/概览/记忆/观测/配置），治理与开关路由 | 已实现（1.5.5 四分区；1.6.3 左栏入口）；用户已目视确认 | locale 未接 |
+| O7 面板 | 左栏底部徽章（圆环 + 百分比，待审带琥珀点）+ 四分区弹层（KPI/概览/记忆/观测/配置），治理、开关与配置路由 | 已实现（1.5.5 四分区；1.6.3 左栏入口；1.6.5 配置可改） | locale 未接 |
 | O8 检索探针 | `context_hub_probe` 输出 top-k 命中率与逐条位置 | 已实现（0.7.0） | — |
 | M6 混合检索 | 关键词 + FTS5 trigram 加成；不可用降级 | 已实现（0.7.0） | — |
 | W3 摘要可检索 | `compaction/summary` → `kind=summary`（session）记忆，`search/explain/probe` 可命中；`status` 显示最近压缩与水位 | 已实现（0.9.0）；水位阈值仍由原生 `thresholdRatio/retainTokens` 决定 | 水位透传校验 |

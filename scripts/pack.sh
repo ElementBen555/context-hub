@@ -3,6 +3,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 version=$(node -p "require('./package.json').version")
+if [ -n "$(git status --porcelain)" ]; then
+  echo "error: working tree is dirty; commit first (pack.sh archives HEAD, not the working tree)." >&2
+  exit 1
+fi
+head_version=$(git show HEAD:package.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+if [ "$head_version" != "$version" ]; then
+  echo "error: HEAD package.json is $head_version but working tree is $version; commit first." >&2
+  exit 1
+fi
 out="dist/dsh-context-hub-${version}.tgz"
 mkdir -p dist
 git archive --format=tar --prefix=package/ "${1:-HEAD}" | gzip -6 > "$out"

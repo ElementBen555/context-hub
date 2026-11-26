@@ -110,13 +110,15 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 /context-hub compact                 # 立即触发一次原生压缩
 /context-hub compactor <hub|native>  # 运行时切换压缩器（失败回退原生）
 /context-hub reembed                 # 重算全部向量（换模型后）
+/context-hub watermark [on|off]      # 水位压缩开关（持久化）
+/context-hub config [键] [值]         # 查看/修改召回预算、TTL、抽取、冲突、语义开关（持久化）
 /context-hub watermark [on|off]      # 水位压缩开关（持久化到记忆库）
 /context-hub review                  # 待审核列表（reviewPending 开启时）
 /context-hub review approve 编号      # 批准后才会被召回
 /context-hub review reject 编号       # 拒绝（软删除，审计链保留）
 ```
 
-面板：刷新 Web 页面后，左侧栏底部是徽章「圆环 + 上下文百分比」（待审时带琥珀色小点，不再显示「记忆 M」）。点开是 640px 卡片，顶部固定 KPI（压力环 + surface/合计/节点/输出预留），下面四个分区：**概览**（上下文构成堆叠条 + 分段表、成本曲线「总估算/注入」双 sparkline + cache 汇总、活动 Top 5；有待审核时顶部出现「去审核」提示条）、**记忆**（有效/待审/已替换/已归档/消息索引指标块、范围/类型条形图 + 类型甜甜圈、最近使用表格、待审核 approve/reject）、**观测**（上下文明细、活动全量、最近主请求与召回车道）、**配置**（运行参数表、水位开关、压缩器与接管模式切换、能力徽章）。Esc 或点遮罩关闭，每 10 秒自动刷新；配色跟随 DSH 主题 token（`--dsw-alias-*`），深色/浅色自动适配。
+面板：刷新 Web 页面后，左侧栏底部是徽章「圆环 + 上下文百分比」（待审时带琥珀色小点，不再显示「记忆 M」）。点开是 640px 卡片，顶部固定 KPI（压力环 + surface/合计/节点/输出预留），下面四个分区：**概览**（上下文构成堆叠条 + 分段表、成本曲线「总估算/注入」双 sparkline + cache 汇总、活动 Top 5；有待审核时顶部出现「去审核」提示条）、**记忆**（有效/待审/已替换/已归档/消息索引指标块、范围/类型条形图 + 类型甜甜圈、最近使用表格、待审核 approve/reject）、**观测**（上下文明细、活动全量、最近主请求与召回车道）、**配置**（召回预算/记忆 TTL/抽取与冲突的步进与分段控件、语义召回三个开关、水位开关、压缩器与接管模式切换、能力徽章；改动即写记忆库并立即生效）。Esc 或点遮罩关闭，每 10 秒自动刷新；配色跟随 DSH 主题 token（`--dsw-alias-*`），深色/浅色自动适配。
 
 ![面板预览](docs/panel-preview.png)
 
@@ -262,7 +264,7 @@ curl -s localhost:11434/health    # {"ok":true,...,"ready":true}
 ## 设计边界（当前版本）
 
 - 默认不替换 compaction 服务：`compactor: native` 时原生压缩仍由 `compaction-basic` 提供，本插件只做触发与检索补位；`compactor: hub` 时在实例上包装 `summarize()`（不动服务注册，失败回退原生），详见 [docs/compactor.md](docs/compactor.md)。
-- 面板只写治理与开关（遗忘/替换/审核/水位/压缩器/模式），不提供记忆内容编辑；上下文数据只读，不回写会话。
+- 面板只写治理、开关与预算参数（遗忘/替换/审核/水位/压缩器/模式/召回条数·字符·冷却·硬顶·时限/TTL/抽取次数/冲突策略/向量·改写·重排开关），不提供记忆内容编辑；上下文数据只读，不回写会话。
 - 不追加自定义会话事件类型：只用既有 `user/message` / `turn/end` 事件驱动。
 - 召回是「关键词重叠（中文二元组 + 拉丁词）+ FTS5 trigram 加成」，可选叠加**向量余弦**（0.8.0，OpenAI 兼容端点）与**LLM 查询改写**（1.2.0，默认关，失败回退原查询）；同义扩展另有 18 组内置词表兜底。FTS5/向量/改写任一不可用都自动降级，不影响主路径。
 - 水位开关：面板配置区有「开启/关闭水位压缩」按钮，`/context-hub watermark on|off` 等价；开关状态存进记忆库 `kv`，重启后沿用（不需要改 profile 配置）。
@@ -275,6 +277,7 @@ curl -s localhost:11434/health    # {"ok":true,...,"ready":true}
 
 已交付（按版本倒序）：
 
+- **1.6.5**：面板「配置」分区可改（召回预算/记忆 TTL/抽取与冲突/语义召回开关），写入记忆库 `kv` 并立即生效；新增 `/context-hub config [键] [值]`；`node test-smoke.mjs` → `SMOKE OK`。
 - **1.6.4**：面板图表/甜甜圈/缓存环增强（记忆类型甜甜圈、85% 式缓存命中环、构成分布条、能力徽章），`node test-smoke.mjs` → `SMOKE OK`。
 - **1.6.3**：面板入口移到左侧栏底部 `sidebar.footer.action`（圆环 + 上下文百分比徽章，待审带琥珀点），`conversation.composer.dock` 只挂隐藏的 `ComposerAnchor`。
 - **1.6.2**：vendored deps 分发包（`scripts/pack.sh`）3,196 文件 / 157,534,812 字节 / SHA-256 `fdd5f16b…`。

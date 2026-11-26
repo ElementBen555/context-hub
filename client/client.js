@@ -208,6 +208,21 @@ window.__ModuleLoader__.load({
       .chp-toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:10px;
         padding:9px 11px;border-radius:11px;background:var(--dsw-alias-bg-layer-2,rgba(248,250,252,.7));
         border:1px solid var(--dsw-alias-border-l1,rgba(15,23,42,.07))}
+      .chp-editgroup{margin:8px 0 2px}
+      .chp-editgroup-title{font-size:11px;color:var(--dsw-alias-label-tertiary,#94a3b8);letter-spacing:.04em;margin:8px 0 2px}
+      .chp-editrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px dashed var(--dsw-alias-border-l1,rgba(15,23,42,.08))}
+      .chp-editrow:last-child{border-bottom:0}
+      .chp-editlabel{font-size:12px;color:var(--dsw-alias-label-secondary,#475569)}
+      .chp-editrow-hint{display:block;font-size:10px;color:var(--dsw-alias-label-tertiary,#94a3b8);margin-top:1px}
+      .chp-editvalue{display:flex;align-items:center;gap:6px}
+      .chp-step{display:inline-flex;align-items:center;gap:4px}
+      .chp-step-btn{width:20px;height:20px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2,rgba(15,23,42,.14));background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-secondary,#475569);font-size:12px;line-height:1;cursor:pointer;padding:0}
+      .chp-step-btn:disabled{opacity:.4;cursor:default}
+      .chp-step-v{min-width:60px;text-align:center;font-size:12px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#0f172a)}
+      .chp-seg{display:inline-flex;border:1px solid var(--dsw-alias-border-l2,rgba(15,23,42,.14));border-radius:8px;overflow:hidden}
+      .chp-seg-btn{border:0;background:transparent;padding:3px 8px;font-size:11px;color:var(--dsw-alias-label-secondary,#475569);cursor:pointer}
+      .chp-seg-btn+.chp-seg-btn{border-left:1px solid var(--dsw-alias-border-l1,rgba(15,23,42,.08))}
+      .chp-seg-on{background:var(--dsw-alias-card-fill-hover,#eef2ff);color:var(--dsw-alias-state-business-primary,#2563eb);font-weight:600}
       .chp-switch{flex:none;width:38px;height:22px;border-radius:999px;cursor:pointer;position:relative;
         border:1px solid var(--dsw-alias-border-l2,rgba(15,23,42,.16));
         background:var(--dsw-alias-border-l2,rgba(15,23,42,.16));transition:background .15s,border-color .15s}
@@ -358,6 +373,37 @@ window.__ModuleLoader__.load({
         h('span', null, item.label),
         h('b', null, String(item.value)),
         h('span', { className: 'chp-legend-pct' }, pctText(Number(item.value), total)))))
+    }
+
+    function StepControl(props) {
+      const value = Number(props.value)
+      const min = Number(props.min)
+      const max = Number(props.max)
+      const step = Number(props.step) || 1
+      const disabled = props.disabled === true
+      const clamp = n => Math.min(max, Math.max(min, n))
+      const label = props.format ? props.format(value) : String(value)
+      return h('span', { className: 'chp-step' },
+        h('button', {
+          type: 'button', className: 'chp-step-btn', 'aria-label': '减少',
+          disabled: disabled || value <= min,
+          onClick: () => props.onChange(clamp(value - step)),
+        }, '−'),
+        h('span', { className: 'chp-step-v' }, label),
+        h('button', {
+          type: 'button', className: 'chp-step-btn', 'aria-label': '增加',
+          disabled: disabled || value >= max,
+          onClick: () => props.onChange(clamp(value + step)),
+        }, '+'))
+    }
+
+    function Segmented(props) {
+      return h('span', { className: 'chp-seg' }, props.options.map(option => h('button', {
+        key: String(option), type: 'button',
+        className: `chp-seg-btn${option === props.value ? ' chp-seg-on' : ''}`,
+        'aria-pressed': option === props.value,
+        onClick: () => { if (option !== props.value) props.onChange(option) },
+      }, props.format ? props.format(option) : String(option))))
     }
 
     function Section(props) {
@@ -810,17 +856,13 @@ window.__ModuleLoader__.load({
         }
 
         if (tab === 'config') {
-          const configRows = [
-            ['模式', config.mode ?? 'auto'],
-            ...(snapshot.compactorState !== null && snapshot.compactorState !== undefined && snapshot.compactor !== 'hub'
-              ? [['压缩器状态', snapshot.compactorState]]
-              : []),
-            ['召回预算', `${config.recallMaxItems} 条 / ${config.recallMaxChars} 字符 · 冷却 ${config.cooldown} 轮`],
-            ['TTL', `session ${config.sessionTtlDays} 天 · project ${config.projectTtlDays} 天`],
-            ['抽取 / 冲突', `${config.extractPasses} 次/轮 · ${config.conflictPolicy}`],
-            ['语义召回', `向量 ${config.embedding === true ? `开（${config.fusion ?? 'weighted'}）` : '关'} · 改写 ${config.rewrite === true ? '开' : '关'}`],
-            ['水位保留', `${config.watermarkRetainTurns ?? 0} 轮 / ${config.watermarkRetainTokens ?? 0} tokens`],
-          ]
+          const setConfig = (key, value) => { if (onAction) onAction({ action: 'config', key, value }) }
+          const editRow = (label, control, hint) => h('div', { key: label, className: 'chp-editrow' },
+            h('span', null,
+              h('span', { className: 'chp-editlabel' }, label),
+              hint ? h('span', { className: 'chp-editrow-hint' }, hint) : null),
+            h('span', { className: 'chp-editvalue' }, control))
+          const ttlText = value => (Number(value) === 0 ? '不过期' : `${value} 天`)
           const capabilities = [
             ['检索', config.embedding === true ? `向量 · ${config.fusion ?? 'weighted'}` : '关键词 + FTS5', config.embedding === true ? '#10b981' : '#64748b'],
             ['改写', config.rewrite === true ? '开' : '关', config.rewrite === true ? '#3b82f6' : '#94a3b8'],
@@ -829,7 +871,7 @@ window.__ModuleLoader__.load({
             ['水位', config.watermark === true ? '开' : '关', config.watermark === true ? '#f97316' : '#94a3b8'],
             ['模式', config.mode ?? 'auto', '#0ea5e9'],
           ]
-          sections.push(h(Section, { key: 'config', title: '运行参数' },
+          sections.push(h(Section, { key: 'config', title: '配置' },
             h('div', { className: 'chp-chips' }, capabilities.map(([label, value, color]) => h('span', {
               key: label,
               className: 'chp-chip-cap',
@@ -838,13 +880,80 @@ window.__ModuleLoader__.load({
               h('span', { className: 'chp-dot', style: { background: color } }),
               h('span', { className: 'chp-chip-cap-k' }, label),
               h('span', { className: 'chp-chip-cap-v' }, value)))),
-            h('table', { className: 'chp-table', style: { marginTop: '10px' } },
-              h('thead', null, h('tr', null, h('th', null, '项'), h('th', { className: 'num' }, '值'))),
-              h('tbody', null, configRows.map(([key, value]) => h('tr', { key },
-                h('td', null, key),
-                h('td', { className: 'num' }, value)))))
-            ))
+            h('div', { className: 'chp-editgroup' },
+              h('div', { className: 'chp-editgroup-title' }, '召回预算'),
+              editRow('条数', h(StepControl, {
+                value: config.recallMaxItems ?? 8, min: 1, max: 20, step: 1,
+                format: value => `${value} 条`,
+                onChange: value => setConfig('recallMaxItems', value),
+              })),
+              editRow('字符', h(StepControl, {
+                value: config.recallMaxChars ?? 1800, min: 200, max: 8000, step: 100,
+                format: value => `${value} 字符`,
+                onChange: value => setConfig('recallMaxChars', value),
+              })),
+              editRow('冷却轮数', h(StepControl, {
+                value: config.cooldown ?? 6, min: 0, max: 20, step: 1,
+                onChange: value => setConfig('recallCooldownTurns', value),
+              })),
+              editRow('硬顶', h(StepControl, {
+                value: config.recallMaxTokens ?? 1200, min: 100, max: 4000, step: 100,
+                format: value => `${value} tokens`,
+                onChange: value => setConfig('recallMaxTokens', value),
+              })),
+              editRow('召回时限', h(StepControl, {
+                value: config.recallTimeoutMs ?? 4000, min: 0, max: 20000, step: 500,
+                format: value => (Number(value) === 0 ? '不限' : `${value} ms`),
+                onChange: value => setConfig('recallTimeoutMs', value),
+              }))),
+            h('div', { className: 'chp-editgroup' },
+              h('div', { className: 'chp-editgroup-title' }, '记忆 TTL'),
+              editRow('session', h(Segmented, {
+                value: config.sessionTtlDays, options: [3, 7, 15, 30],
+                format: value => `${value} 天`,
+                onChange: value => setConfig('sessionTtlDays', value),
+              })),
+              editRow('project', h(StepControl, {
+                value: config.projectTtlDays ?? 90, min: 0, max: 3650, step: 30,
+                format: ttlText,
+                onChange: value => setConfig('projectTtlDays', value),
+              })),
+              editRow('global', h(StepControl, {
+                value: config.globalTtlDays ?? 0, min: 0, max: 3650, step: 30,
+                format: value => (Number(value) === 0 ? '永久' : `${value} 天`),
+                onChange: value => setConfig('globalTtlDays', value),
+              }))),
+            h('div', { className: 'chp-editgroup' },
+              h('div', { className: 'chp-editgroup-title' }, '抽取与冲突'),
+              editRow('抽取次数/轮', h(StepControl, {
+                value: config.extractPasses ?? 2, min: 1, max: 10, step: 1,
+                onChange: value => setConfig('extractPassesPerTurn', value),
+              })),
+              editRow('冲突策略', h(Segmented, {
+                value: config.conflictPolicy ?? 'evidence', options: ['evidence', 'recency'],
+                format: value => (value === 'evidence' ? '新证据胜' : '时间优先'),
+                onChange: value => setConfig('conflictPolicy', value),
+              })))))
+          const semanticToggles = [
+            ['embedding.enabled', '向量召回', config.embedding === true, '需先在 profile 配 embedding.baseUrl/model'],
+            ['rewrite.enabled', '查询改写', config.rewrite === true, '一次 LLM 调用把查询扩成同义词/英文关键词'],
+            ['rerank.enabled', 'LLM 重排', config.rerank === true, '候选 10 条按相关度重排，失败回退原序'],
+          ].map(([key, label, on, hint]) => h('div', { key, className: 'chp-toggle' },
+            h('div', null,
+              h('div', { style: { fontWeight: 600, fontSize: '12px' } }, `${label}：${on ? '开' : '关'}`),
+              h('div', { className: 'chp-sec-extra', style: { textTransform: 'none', letterSpacing: 0 } }, hint)),
+            h('button', {
+              type: 'button',
+              className: `chp-switch${on ? ' chp-switch-on' : ''}`,
+              'aria-label': `${on ? '关闭' : '开启'}${label}`,
+              'aria-pressed': on,
+              onClick: () => setConfig(key, !on),
+            }, h('span', { className: 'chp-knob' }))))
+
           const toggles = [
+            h('div', { key: 'sem-title', className: 'chp-editgroup-title' }, '语义召回'),
+            ...semanticToggles,
+            h('div', { key: 'wm-title', className: 'chp-editgroup-title' }, '压缩与接管'),
             h('div', { key: 'watermark', className: 'chp-toggle' },
               h('div', null,
                 h('div', { style: { fontWeight: 600, fontSize: '12px' } },

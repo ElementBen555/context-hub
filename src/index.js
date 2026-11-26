@@ -80,6 +80,91 @@ export const defaults = {
   mode: 'auto',
 }
 
+
+/** 面板/命令可改的运行时配置白名单（改后写 kv，重启沿用）。 */
+const CONFIG_EDITABLE = {
+  recallMaxItems: { kind: 'int', min: 1, max: 20 },
+  recallMaxChars: { kind: 'int', min: 200, max: 8000 },
+  recallCooldownTurns: { kind: 'int', min: 0, max: 20 },
+  recallMaxTokens: { kind: 'int', min: 100, max: 4000 },
+  recallTimeoutMs: { kind: 'int', min: 0, max: 20000 },
+  sessionTtlDays: { kind: 'enum', values: [3, 7, 15, 30] },
+  projectTtlDays: { kind: 'int', min: 0, max: 3650 },
+  globalTtlDays: { kind: 'int', min: 0, max: 3650 },
+  extractPassesPerTurn: { kind: 'int', min: 1, max: 10 },
+  conflictPolicy: { kind: 'enum', values: ['evidence', 'recency'] },
+  'embedding.enabled': { kind: 'bool' },
+  'rewrite.enabled': { kind: 'bool' },
+  'rerank.enabled': { kind: 'bool' },
+}
+
+function configPathGet(target, key) {
+  let node = target
+  for (const part of key.split('.')) node = node?.[part]
+  return node
+}
+
+function configPathSet(target, key, value) {
+  const parts = key.split('.')
+  let node = target
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    if (node[parts[i]] === undefined || node[parts[i]] === null) node[parts[i]] = {}
+    node = node[parts[i]]
+  }
+  node[parts[parts.length - 1]] = value
+}
+
+function normalizeConfigValue(spec, raw) {
+  if (spec.kind === 'bool') {
+    if (raw === true || raw === 'true' || raw === 1 || raw === '1') return true
+    if (raw === false || raw === 'false' || raw === 0 || raw === '0') return false
+    return undefined
+  }
+  if (spec.kind === 'int') {
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return undefined
+    return Math.min(spec.max, Math.max(spec.min, Math.round(n)))
+  }
+  if (spec.kind === 'enum') {
+    const n = Number(raw)
+    const candidate = Number.isFinite(n) ? n : String(raw)
+    return spec.values.includes(candidate) ? candidate : undefined
+  }
+  return undefined
+}
+
+function applyStoredConfig(store) {
+  if (store.db === undefined) return
+  for (const [key, spec] of Object.entries(CONFIG_EDITABLE)) {
+    let raw
+    try { raw = store.getKv(`config:${key}`) } catch { continue }
+    if (raw === undefined || raw === null || raw === '') continue
+    const value = normalizeConfigValue(spec, raw)
+    if (value !== undefined) configPathSet(store.config, key, value)
+  }
+}
+
+function setConfigValue(ctx, store, key, raw) {
+  const spec = CONFIG_EDITABLE[key]
+  if (spec === undefined) return { ok: false, error: `不可修改的配置项：${key}` }
+  const wantsOn = raw === true || raw === 'true' || raw === 1 || raw === '1'
+  if (key === 'embedding.enabled' && wantsOn && store.config.embedding.baseUrl === '') {
+    return { ok: false, error: '未配置 embedding.baseUrl，无法开启向量召回' }
+  }
+  const value = normalizeConfigValue(spec, raw)
+  if (value === undefined) return { ok: false, error: `取值不合法：${key}=${String(raw)}` }
+  configPathSet(store.config, key, value)
+  try { store.setKv(`config:${key}`, String(value)) } catch { /* 持久化失败不阻塞本次生效 */ }
+  store.logEvent('config-change', { detail: `${key}=${String(value)}` })
+  if (key === 'embedding.enabled' && value === true) {
+    void ensureEmbeddingService(ctx, store).then(() => store.backfillEmbeddings().catch(() => {})).catch(() => {})
+  }
+  if (key.endsWith('TtlDays')) {
+    try { store.archiveExpired(); store.enforceCapacity() } catch { /* 维护失败不阻塞 */ }
+  }
+  return { ok: true, key, value }
+}
+
 const EXTRACT_PROMPT = [
   'You maintain a long-term memory store for an AI coding assistant. Read the conversation slice below and extract durable, reusable knowledge that will help in future sessions.',
   '',
@@ -238,7 +323,7 @@ export function resolveConfig(config) {
 }
 
 const ACTIVITY_LABELS = {
-  recall: '召回', 'recall-miss': '召回未命中', extract: '抽取', compact: '压缩', summary: '摘要', request: '请求', restore: '还原', decompress: '还原原文', mode: '模式', forget: '遗忘', supersede: '替换', compactor: '压缩器', abtest: 'A/B', rewrite: '改写', 'rewrite-error': '改写失败', watermark: '水位压缩', 'watermark-error': '水位失败', 'watermark-toggle': '水位开关', 'rewrite-retry': '改写重试', rerank: '重排', 'rerank-error': '重排失败', 'rerank-empty': '重排空输出', reembed: '重算向量', 'embedding-reset': '清旧向量', 'embedding-start': '启动向量服务', 'embedding-ready': '向量服务就绪', 'embedding-start-error': '向量服务启动失败', 'recall-timeout': '召回超时', unfold: '展开原文', 'compact-auto': '自动压缩', 'compact-auto-error': '自动压缩失败',
+  recall: '召回', 'recall-miss': '召回未命中', extract: '抽取', compact: '压缩', summary: '摘要', request: '请求', restore: '还原', decompress: '还原原文', mode: '模式', forget: '遗忘', supersede: '替换', compactor: '压缩器', abtest: 'A/B', rewrite: '改写', 'rewrite-error': '改写失败', watermark: '水位压缩', 'watermark-error': '水位失败', 'watermark-toggle': '水位开关', 'rewrite-retry': '改写重试', rerank: '重排', 'rerank-error': '重排失败', 'rerank-empty': '重排空输出', reembed: '重算向量', 'embedding-reset': '清旧向量', 'embedding-start': '启动向量服务', 'embedding-ready': '向量服务就绪', 'embedding-start-error': '向量服务启动失败', 'recall-timeout': '召回超时', unfold: '展开原文', 'compact-auto': '自动压缩', 'compact-auto-error': '自动压缩失败', 'config-change': '配置修改',
 }
 
 /** 粗估文本 token 数（中文 ~1.6 字符/token，英文偏保守）；只用于注入硬顶。 */
@@ -2914,9 +2999,12 @@ function statusSnapshot(ctx, store, session, sessionId) {
       mode: modeOf(store),
       recallMaxItems: config.recallMaxItems,
       recallMaxChars: config.recallMaxChars,
+      recallMaxTokens: config.recallMaxTokens,
+      recallTimeoutMs: config.recallTimeoutMs,
       cooldown: config.recallCooldownTurns,
       sessionTtlDays: config.sessionTtlDays,
       projectTtlDays: config.projectTtlDays,
+      globalTtlDays: config.globalTtlDays,
       extractPasses: config.extractPassesPerTurn,
       conflictPolicy: config.conflictPolicy,
       embedding: config.embedding.enabled === true,
@@ -3123,6 +3211,12 @@ function installStatusRoute(ctx, store) {
             const action = body?.action
             const id = Number(body?.id)
             const value = body?.value
+            if (action === 'config') {
+              const key = typeof body?.key === 'string' ? body.key : ''
+              const result = setConfigValue(ctx, store, key, value)
+              if (!result.ok) return json(400, result)
+              return json(200, { ok: true, action, key: result.key, value: result.value })
+            }
             if (action === 'forget') {
               if (!Number.isFinite(id)) return json(400, { ok: false, error: 'id 必须是数字' })
               if (store.forget(id) === 0) return json(404, { ok: false, error: `#${id} 不存在或已删除` })
@@ -3579,8 +3673,8 @@ function defineTools(ctx, store) {
 function defineCommand(ctx, store) {
   ctx.commands.register({
     name: 'context-hub',
-    description: '上下文中枢：status / doctor / mode / search / remember / history / restore / decompress / unfold / explain / probe / log / audit / compact / compactor / reembed / watermark / review',
-    input: { hint: 'status | doctor | mode [observe|assist|takeover|full] | search <词> | remember <内容> | history <词> | restore <start> [end] | decompress [id|start] [end] | unfold [id:<n>|start] [end] [steps:<n>] | explain <词> | probe [n] | log [n] | audit <id> | compact | compactor <hub|native> | reembed | watermark [on|off] | review [list|approve|reject] [id]' },
+    description: '上下文中枢：status / doctor / mode / search / remember / history / restore / decompress / unfold / explain / probe / log / audit / compact / compactor / reembed / watermark / config / review',
+    input: { hint: 'status | doctor | mode [observe|assist|takeover|full] | search <词> | remember <内容> | history <词> | restore <start> [end] | decompress [id|start] [end] | unfold [id:<n>|start] [end] [steps:<n>] | explain <词> | probe [n] | log [n] | audit <id> | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id]' },
     async handler(invocation) {
       const raw = invocation.rawInput.trim()
       const [sub, ...rest] = raw.split(/\s+/)
@@ -3643,6 +3737,19 @@ function defineCommand(ctx, store) {
           kind: 'success',
           text: `水位压缩：${wm.enabled === true ? '开' : '关'}（触发 ${Math.round(wm.triggerRatio * 100)}%，保留 ${wm.retainTokens} tokens，冷却 ${wm.cooldownTurns} 轮）\n用法：/context-hub watermark on | off`,
         }
+      }
+      if (sub === 'config') {
+        const [key, ...restValue] = argument.split(/\s+/).filter(Boolean)
+        if (key === undefined) {
+          const rows = Object.keys(CONFIG_EDITABLE).map(k => `- ${k} = ${String(configPathGet(store.config, k))}`)
+          return {
+            kind: 'success',
+            text: ['可改配置（面板「配置」页同款，改后写记忆库并立即生效）：', ...rows, '用法：/context-hub config <键> <值>'].join('\n'),
+          }
+        }
+        const result = setConfigValue(ctx, store, key, restValue.join(' '))
+        if (!result.ok) return { kind: 'error', text: result.error }
+        return { kind: 'success', text: `已设置 ${result.key} = ${String(result.value)}（已持久化，立即生效）。` }
       }
       if (sub === 'reembed') {
         if (store.db === undefined) return { kind: 'error', text: '记忆库不可用。' }
@@ -3868,7 +3975,7 @@ function defineCommand(ctx, store) {
           return { kind: 'error', text: `压缩失败：${error instanceof Error ? error.message : String(error)}` }
         }
       }
-      return { kind: 'error', text: '用法：/context-hub status | doctor | mode [observe|assist|takeover|full] | search <关键词> | remember <内容> | history <关键词> | restore <起始 seq> [结束 seq] | decompress [id:<编号>|起始 seq] [结束 seq] | unfold [id:<编号>|起始 seq] [结束 seq] [steps:<n>] | explain <关键词> | log [条数] | audit <编号> | forget <编号> | supersede <编号> <新内容> | export | compact | compactor <hub|native> | reembed | watermark [on|off] | review [list|approve|reject] [id]' }
+      return { kind: 'error', text: '用法：/context-hub status | doctor | mode [observe|assist|takeover|full] | search <关键词> | remember <内容> | history <关键词> | restore <起始 seq> [结束 seq] | decompress [id:<编号>|起始 seq] [结束 seq] | unfold [id:<编号>|起始 seq] [结束 seq] [steps:<n>] | explain <关键词> | log [条数] | audit <编号> | forget <编号> | supersede <编号> <新内容> | export | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id]' }
     },
   })
 }
@@ -3954,6 +4061,7 @@ export function apply(ctx, config) {
   try {
     store.open()
     ctx.logger?.info?.(`context-hub: memory store at ${store.file}`)
+    applyStoredConfig(store)
     if (settings.embedding.enabled) {
       const cleared = store.resetEmbeddings()
       if (cleared > 0) store.logEvent('embedding-reset', { detail: `model ${settings.embedding.model}（清 ${cleared} 条旧向量）` })

@@ -363,6 +363,32 @@ if (!Array.isArray(snapshot.memory.recent) || !Array.isArray(snapshot.activity))
 if (!Array.isArray(snapshot.memory.pendingItems)) throw new Error('status snapshot pendingItems missing')
 console.log('route:', snapshot.session.totalTokens, snapshot.memory.active, snapshot.compactor)
 
+// 1.6.5：面板改配置（action=config）——写 kv、立即生效、非法值 400
+const cfgActionRoute = routes.find(item => item.path === '/api/context-hub.action')
+if (cfgActionRoute === undefined) throw new Error('action route missing')
+const postCfg = body => cfgActionRoute.fetch(new Request('http://localhost/api/context-hub.action', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+}))
+const cfgResp = await postCfg({ action: 'config', key: 'recallMaxItems', value: 7 })
+const cfgBody = await cfgResp.json()
+if (cfgBody.ok !== true || cfgBody.value !== 7) throw new Error('config set failed: ' + JSON.stringify(cfgBody))
+const cfgSnap = await (await route.fetch(new Request('http://localhost/api/context-hub.status?sessionId=session-1'))).json()
+if (cfgSnap.config.recallMaxItems !== 7) throw new Error('config not applied to snapshot: ' + cfgSnap.config.recallMaxItems)
+const cfgBad = await postCfg({ action: 'config', key: 'sessionTtlDays', value: 5 })
+if (cfgBad.status !== 400) throw new Error('invalid enum accepted: ' + cfgBad.status)
+const cfgBadInt = await postCfg({ action: 'config', key: 'recallMaxChars', value: 'abc' })
+if (cfgBadInt.status !== 400) throw new Error('invalid int accepted: ' + cfgBadInt.status)
+const cfgDb2 = new DatabaseSync(dbPath)
+const cfgRow2 = cfgDb2.prepare("SELECT value FROM kv WHERE key = 'config:recallMaxItems'").get()
+const cfgEvent2 = cfgDb2.prepare("SELECT COUNT(*) AS n FROM context_events WHERE kind = 'config-change'").get()
+cfgDb2.close()
+if (cfgRow2 === undefined || cfgRow2.value !== '7') throw new Error('config not persisted: ' + JSON.stringify(cfgRow2))
+if (Number(cfgEvent2?.n ?? 0) < 1) throw new Error('config-change event missing')
+await postCfg({ action: 'config', key: 'recallMaxItems', value: 8 })
+console.log('config  : recallMaxItems -> 7, persisted, invalid -> 400')
+
 // W2：记忆关系（memory_links）与一跳扩展
 await command.handler(invocation('remember 蓝鲸项目使用 sqlite 存储向量。'))
 await command.handler(invocation('remember 蓝鲸项目使用 sqlite 存储记忆。'))
