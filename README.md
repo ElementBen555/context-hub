@@ -123,7 +123,7 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 
 | 配置 | 默认 | 范围 |
 | --- | --- | --- |
-| `recallMaxItems` / `DSH_CONTEXT_HUB_RECALL_ITEMS` | 6 | 1–20 |
+| `recallMaxItems` / `DSH_CONTEXT_HUB_RECALL_ITEMS` | 8 | 1–20 |
 | `recallMaxChars` / `DSH_CONTEXT_HUB_RECALL_CHARS` | 1800 | 200–8000 |
 | `recallCooldownTurns` | 6 | 0–20 |
 | `recallMaxTokens` / `DSH_CONTEXT_HUB_RECALL_TOKENS` | 1200 | 100–4000；召回注入的 token 硬顶（中文按 ~1.6 字符/token 粗估） |
@@ -131,8 +131,10 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 | `projectIdentity` / `DSH_CONTEXT_HUB_PROJECT_IDENTITY` | `git` | `git`（origin 归一化）/ `cwd`（绝对路径） |
 | `sessionTtlDays` / `DSH_CONTEXT_HUB_SESSION_TTL_DAYS` | 7 | 3 / 7 / 15 / 30 |
 | `projectTtlDays` | 90 | 0–3650（0=不过期） |
+| `globalTtlDays` | 0 | 0–3650（0=永久） |
 | `capacityPerScope` | 5000 | 100–100000 |
 | `extractPassesPerTurn` / `DSH_CONTEXT_HUB_EXTRACT_PASSES` | 2 | 1–10 |
+| `extractTimeoutMs` / `DSH_CONTEXT_HUB_EXTRACT_TIMEOUT_MS` | 60000 | 5000–300000；超时中止本次抽取并释放 latch |
 | `admissionThreshold` | 0.6 | 0–1 |
 | `conflictPolicy` / `DSH_CONTEXT_HUB_CONFLICT_POLICY` | `evidence` | `evidence` / `recency` |
 | `compactor` / `DSH_CONTEXT_HUB_COMPACTOR` | `native` | `native` / `hub`（失败回退 native；见 [docs/compactor.md](docs/compactor.md)）|
@@ -217,11 +219,11 @@ curl -s localhost:11434/health    # {"ok":true,...,"ready":true}
 
 - `package.json`：`files` 含 `src`、`client`、`cordis.patch.yml`、`locale`、`icon.svg`、`README.md`、`LICENSE`、`CHANGELOG.md`、`docs`；`exports` 增加 `./locale/*.json` 与 `./icon`；`publishConfig.access=public`。
 - 展示元数据：`locale/en.json` / `locale/zh.json` 提供 `meta.title` 与 `meta.description`（不声明 `meta.detail`，详情页回退 README）；`icon.svg` 为 610 B 原创 SVG（限 256 KiB）。
-- `LICENSE`（MIT）与 `CHANGELOG.md` 已就位；`npm pack --dry-run` 验证 14 个文件、56.8 kB（临时用 `npm_config_cache=$PWD/.npm-cache` 绕过只读的 `~/.npm`）。
+- `LICENSE`（MIT）与 `CHANGELOG.md` 已就位；`npm pack` 当前 29 个文件、约 245 KB；精确字节数与 SHA-256 见 `dist/INSTALL.md`（包外文件，避免包内自引用过期）。临时用 `npm_config_cache=$PWD/.npm-cache` 绕过只读的 `~/.npm`。
 - 发布状态（2026-11-25）：按用户决定**暂不发布 npm**（本机无 npm 账号），继续以 `link:` 方式装在本机 profile。
 - 分发包：`dist/` 下的最新 `dsh-context-hub-*.tgz`（版本、文件数、字节数与 SHA-256 以工作区根的 `dist/INSTALL.md` 为准，避免包内文档自引用过期）；DSH 安装解析器把绝对路径 `.tgz` 识别为 tarball。
 - 打包产物自检：`npm pack` 的 1.0.0 tarball 含 `src/`、`client/`、`cordis.patch.yml`、`locale/`、`icon.svg`、`docs/`；`createRequire` 能解析 `dsh-context-hub`、`./locale/en.json`、`./locale/zh.json`、`./icon`、`./client`，且 `import { apply, inject }` 得到 `tools,commands`（0.7.0 已验证，1.0.0 结构相同）。
-- 发布命令（需要 npm 登录，未执行）：`npm publish`；随后 `plugin_manager install_bundle(target="dsh-context-hub@1.0.0")` 验证第三方安装路径。
+- 发布命令（需要 npm 登录，未执行）：`npm publish`；随后 `plugin_manager install_bundle(target="dsh-context-hub@1.6.1")` 验证第三方安装路径。
 - 名称 `dsh-context-hub` 在 npm registry 查询为 404（未占用）。
 
 ## 数据
@@ -282,4 +284,4 @@ curl -s localhost:11434/health    # {"ok":true,...,"ready":true}
 - 水位接管默认关闭：开启前建议先在空闲会话试 `retainTokens`；大区间一次折叠的授权策略（按 token 上限/确认）未做。
 - 面板里语义只读，水位有开关按钮；改写/重排/水位阈值仍走 profile 或命令。
 - 面板接 locale 服务（现在中英文案硬编码在组件里）。
-- npm 发布与市场收录：等有 npm 账号后 `npm publish`，再用 `install_bundle(target="dsh-context-hub@1.5.3")` 验证；自依赖已清，发布前只需重打包。
+- npm 发布与市场收录：等有 npm 账号后 `npm publish`，再用 `install_bundle(target="dsh-context-hub@1.6.1")` 验证；自依赖已清，发布前只需重打包。

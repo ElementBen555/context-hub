@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:f
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { execFileSync } from 'node:child_process'
-import { apply } from './src/index.js'
+import { apply, defaults } from './src/index.js'
 import { DatabaseSync } from 'node:sqlite'
 
 const dbPath = fileURLToPath(new URL('./tmp-smoke.db', import.meta.url))
@@ -1040,5 +1040,65 @@ if (!unfolded.content?.[0]?.text?.includes('ORIGINAL-0')) throw new Error('unfol
 console.log('unfold  :', 'checkpoint 摘要 → 原文 relay（2 步预算）')
 
 process.env.DSH_CONTEXT_HUB_DB = dbPath
+
+
+// ---- P0：默认值、遗忘墓碑、session 作用域隔离 ----
+{
+  if (defaults.recallMaxItems !== 8 || defaults.recallMaxChars !== 1800 || defaults.recallCooldownTurns !== 6 || defaults.extractPassesPerTurn !== 2) {
+    throw new Error(`default budget drift: ${defaults.recallMaxItems}/${defaults.recallMaxChars}/${defaults.recallCooldownTurns}/${defaults.extractPassesPerTurn}`)
+  }
+  console.log('defaults:', '召回 8/1800、冷却 6、抽取 2')
+
+  const p0Db = fileURLToPath(new URL('./tmp-smoke-p0.db', import.meta.url))
+  rmSync(p0Db, { force: true })
+  process.env.DSH_CONTEXT_HUB_DB = p0Db
+  const p0Tools = new Map()
+  const p0Commands = new Map()
+  const p0Listeners = new Map()
+  function p0Session(id) {
+    return { id, header: { cwd: '/tmp/project-p0' }, seq: 0, eventAt() { return undefined } }
+  }
+  function p0Agent(session) {
+    return { session, options: { provider: 'fake', model: 'fake-model' }, inject() {} }
+  }
+  const p0AgentA = p0Agent(p0Session('session-p0-A'))
+  const p0Ctx = {
+    logger: { info() {}, warn() {} },
+    get(name) {
+      if (name === 'agents') return { get: id => (id === 'session-p0-A' ? p0AgentA : undefined) }
+      if (name === 'tokenMeter') return { contextPressure: () => ({ pressureTokens: 1, contextWindow: 1000 }), measure: () => ({ surfaceTokens: 1, totalTokens: 2, nodes: [] }) }
+      if (name === 'connection') return { fetch: { register() { return () => Promise.resolve() } } }
+      return undefined
+    },
+    tools: { register(definition) { p0Tools.set(definition.name, definition) } },
+    commands: { register(definition) { p0Commands.set(definition.name, definition) } },
+    on(event, handler) { return addListener(p0Listeners, event, handler) },
+    inject(_deps, callback) { callback(p0Ctx) },
+    effect() {},
+  }
+  apply(p0Ctx, { embedding: { enabled: false }, rewrite: { enabled: false }, rerank: { enabled: false } })
+  const text = value => (typeof value === 'string' ? value : value?.text ?? '')
+  const execA = { agent: p0AgentA, signal: new AbortController().signal, token: {} }
+
+  const first = await p0Tools.get('context_hub_remember').execute({ text: 'P0-墓碑-口令 ORCA-42', kind: 'fact' }, execA)
+  const firstId = Number(text(first).match(/#(\d+)/)?.[1])
+  if (!Number.isFinite(firstId)) throw new Error(`remember did not return id: ${text(first)}`)
+  await p0Commands.get('context-hub').handler({ agent: p0AgentA, signal: new AbortController().signal, commandId: 'p0-forget', rawInput: `forget ${firstId}` })
+  await p0Tools.get('context_hub_remember').execute({ text: 'P0-墓碑-口令 ORCA-42', kind: 'fact' }, execA)
+  const p0Check = new DatabaseSync(p0Db)
+  const tombstone = p0Check.prepare('SELECT status FROM memories WHERE id = ?').get(firstId)
+  p0Check.close()
+  if (tombstone === undefined || tombstone.status !== 'deleted') throw new Error(`forgotten memory was resurrected: ${JSON.stringify(tombstone)}`)
+  console.log('tombstone:', `#${firstId} 保持 deleted，未被同文写入复活`)
+
+  await p0Tools.get('context_hub_remember').execute({ text: 'P0-会话隔离-口令 ZULU-77', kind: 'fact' }, execA)
+  const p0AgentB = p0Agent(p0Session('session-p0-B'))
+  const execB = { agent: p0AgentB, signal: new AbortController().signal, token: {} }
+  const seenA = text(await p0Tools.get('context_hub_search').execute({ query: 'ZULU-77' }, execA))
+  const seenB = text(await p0Tools.get('context_hub_search').execute({ query: 'ZULU-77' }, execB))
+  if (!seenA.includes('P0-会话隔离-口令')) throw new Error(`session A search missed own memory: ${seenA}`)
+  if (seenB.includes('P0-会话隔离-口令')) throw new Error('session-scope memory leaked into another session')
+  console.log('isolation:', 'session 记忆只在原会话可见')
+}
 
 console.log('SMOKE OK')

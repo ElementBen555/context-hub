@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-hub",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": false,
   "type": "module",
   "description": "SQLite 记忆 + 关键词/FTS5/可选向量 + LLM 改写/重排 + 可选的 8 段压缩器与水位接管 + Web 面板",
@@ -45,7 +45,7 @@
     }
   },
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.13"
   },
   "keywords": [
     "dsh",
@@ -59,9 +59,17 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dsh-market/dsh-context-hub.git"
+    "url": "https://github.com/ElementBen555/context-hub.git"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "test": "node test-smoke.mjs",
+    "stress": "node scripts/stress.mjs",
+    "concurrency": "node scripts/concurrency.mjs",
+    "bench": "node scripts/recall-bench.mjs",
+    "eval": "node scripts/eval/recall.mjs",
+    "prepack": "chmod +x embed/start.sh embed/stop.sh"
   }
 }

@@ -1,6 +1,6 @@
 # dsh-context-hub 优劣势与补强计划
 
-> 版本：2026-11-25 · 对应实现 **1.5.3**
+> 版本：2026-11-26 · 对应实现 **1.6.1**
 > 目的：把「和别的插件比，强在哪、弱在哪」写清楚，并把弱项收敛成五个可验收的补强方向。
 > 方法：本机实测（`test-smoke.mjs`、`scripts/*.mjs`、真实会话的 `context_hub_status/probe/abtest`）+ 竞品 README、npm registry、GitHub 公开数据。**没有做同环境、同数据集的横向跑分**；竞品能力以其公开描述与公开数据为准，数据口径见 §2.1，引用见 §8。
 > 与上一版的差异：1.1.1 版主要对比 billion-context / graph-memory / dsh-context，未纳入 dsh-memory（灵枢）、OpenViking、dsh-mnemon；本版补齐这三个，并修正 graph-memory 的仓库引用（在架项目为 `adoresever/graph-memory`，不是旧文档里的 `d3412-999/dsh-graph-memory`）。
@@ -17,12 +17,12 @@
 - 1.5.2 补齐可选增量：**独立消息索引**（`messages` + `messages_fts`，零记忆时也能按消息召回）、**LongMemEval 向量路径**、**面板成本曲线**。
 - 1.5.3 补齐：**多语言 embedder**（multilingual-e5-small：zh-holdout R@5 100%、英文 LongMemEval 12 题向量与词法持平 83.3%）、**RRF 可选融合**（默认 weighted；RRF 在英文上反而伤，已如实记录）、**retainTurns 接管**（保留最后 N 个用户回合，只折叠最旧前缀）。**D2 仍受 npm 账号阻塞；100k/多用户按单机定位延后。**
 
-## 1. 我们是什么（1.5.3）
+## 1. 我们是什么（1.6.1）
 
 | 环节 | 实现 | 入口 |
 | --- | --- | --- |
 | 记忆 | `turn/end` 用会话当前模型抽取结构化记忆，五维质量门槛（0.6）后写 SQLite；sha1 精确去重；`explicit`/`compaction` 绕过门槛；A2 起记录 `message_id/message_seq/sentence_no/valid_from/valid_to` | 自动 + `context_hub_remember` |
-| 召回 | 用户消息触发，独立消息索引 + 关键词/FTS5 + 可选向量（weighted/RRF）、LLM 改写/重排；≤6 条/1200 字符，3 轮冷却；消息级候选 + ±1 句窗口 | 自动 + `context_hub_search` |
+| 召回 | 用户消息触发，独立消息索引 + 关键词/FTS5 + 可选向量（weighted/RRF）、LLM 改写/重排；≤8 条/1800 字符、6 轮冷却、1200 tokens 硬顶、4000ms 超时；消息级候选 + ±1 句窗口 | 自动 + `context_hub_search` |
 | 检索质量 | `probe` 自造查询测 top-k；`explain` 给逐条打分与跳过原因；`abtest` 对比压缩提示词；**B1/B3 新增 `doctor` 与 `scripts/eval/recall.mjs`** | 工具 + `/context-hub` 子命令 |
 | 压缩 | 默认复用原生 compaction；`compactor: hub` 包装 `summarize()`；`watermark` opt-in，支持 `retainTokens`/`retainTurns`（保留 N 轮，只折叠最旧前缀）；`mode` 四档 | `/context-hub compact`、`compactor`、`watermark`、`mode` |
 | 折叠区 | `compaction/summary` 落成 `kind=summary` 记忆；按 seq 检索 `history`、还原 `restore`；**C2 新增按摘要区间 `decompress`** | `context_hub_history` / `context_hub_restore` / `context_hub_decompress` |
@@ -31,7 +31,7 @@
 | 关系 | `memory_links`（related/supersedes），召回时一跳扩展 ≤1 条 | 自动 + `explain` 可见 |
 | 消息索引 | 独立 `messages` + `messages_fts`；召回前增量索引，零记忆时也能按原文召回 | 自动 + `explain` 消息候选 |
 
-实测基线（2026-11-25，本机 profile `web`，deepseek-flash）：surface 539,150 tokens → 1.1.0 时 669,147 tokens / 1,388 节点 / 5,268 事件；记忆 active 6；`probe` 4/4 → 20/20（自动出题，**不构成泛化证据**）；30 条改写探针：词法 top-6 13.3%，接本地 `bge-small-zh-v1.5` 后 56.7%（p50 6.1ms）；A/B 摘要 B 8/8 段、来源覆盖 0.25，A 7/7 段、0.30。
+实测基线（2026-11-25，本机 profile `web`，deepseek-flash）：surface 539,150 tokens → 1.1.0 时 669,147 tokens / 1,388 节点 / 5,268 事件；记忆 active 6；`probe` 4/4 → 20/20（自动出题，**不构成泛化证据**）；30 条改写探针：词法 top-6 13.3%，接本地 `multilingual-e5-small` 后 80%（24/30，p50 5.6ms）；zh-holdout 向量 R@1 66.7% / R@5 100%；A/B 摘要 B 8/8 段、来源覆盖 0.25，A 7/7 段、0.30。
 
 ## 2. 横向对比（1.5.3）
 
@@ -66,7 +66,7 @@
 | 默认路径 | 词法 + FTS5；向量/改写/重排默认关 | 确定性规则 + Rust 检索 | 服务端六类 context 召回 | 向量 TopK + FTS5 回退 | 分层：常驻/检索/Provider |
 | 语义 | 可选 BGE / multilingual-e5 / OpenAI 兼容；weighted 默认，RRF 可选 | 结构化检索为主 | 服务端语义/上下文 | 可选 embedding | 取决于 Provider |
 | 消息级召回 | 独立消息索引 + 事实聚合；零记忆时也能按原文召回，渲染 ±1 句窗口 | 时间线/原文可回溯 | 会话提交 | **命中带回原始 Q/A** | 项目档案/记忆空间 |
-| 融合/预算 | 关键词+FTS+向量加权；6 条/1200 字符 | 服务端/规则 | `recallMaxTokens` + 六类配额 | TopK | 策略预算 |
+| 融合/预算 | 关键词+FTS+向量加权；8 条/1800 字符 + 1200 tokens 硬顶 | 服务端/规则 | `recallMaxTokens` + 六类配额 | TopK | 策略预算 |
 | 调试 | `explain`/`probe`/`abtest`/`doctor` + `scripts/eval/recall.mjs` | 指标与审计 | 服务端日志 | `gm_status`/`gm_stats` | UI 中可见本轮读写 |
 | 公共基准 | LongMemEval-S 48 题词法 R@5 79.2%；12 题 e5 向量与词法持平；zh-holdout e5 R@5 100% | 有 | 以产品为主 | 有 20 轮实测 | 无准确率声明 |
 
@@ -106,7 +106,7 @@
 
 - **S1 一体化，共用数据**：抽取的记忆同时服务召回、`hub` 摘要与面板归因；三个专项插件拼起来会重复注入、预算互相打架。
 - **S2 低冲突**：默认 `native` 时只做触发与折叠区检索；`hub` 仅实例包装 `summarize()`，失败回退（`compact-hub-fallback`），不新增 compaction 服务。
-- **S3 召回是预算而不是税**：6 条/1200 字符、3 轮冷却、scope 权重（1.0/0.8/0.6）、TTL、每 scope 5000 条上限、五维准入 0.6；比恒定大预算注入更适合长会话。
+- **S3 召回是预算而不是税**：8 条/1800 字符、6 轮冷却、1200 tokens 硬顶、4000ms 超时、scope 权重（1.0/0.8/0.6）、TTL、每 scope 5000 条上限、五维准入 0.6；比恒定大预算注入更适合长会话。
 - **S4 可解释、可度量**：`explain` 给出 overlap/ratio/base/weight/decay/usage 与跳过原因；`probe` 给命中率；`abtest` 给段覆盖/来源覆盖。多数记忆插件只有成功/失败。
 - **S5 零外部依赖、可降级**：`node:sqlite` 单文件，FTS5 不可用自动退回纯关键词；embedding/改写/重排任一失败都不阻塞主路径。
 - **S6 中文友好**：中文二元组 + 18 组中英近义 + trigram，短查询与 `compact↔压缩` 这类跨语言写法能命中。
@@ -118,7 +118,7 @@
 
 ### W1 检索默认质量不足，且缺少公共评测
 
-- 现象：默认只跑词法；向量/改写/重排都默认关；30 条改写探针 top-6 56.7%，未到 70% 验收线；`probe` 是自动出题，不能证明泛化。
+- 现象：向量/改写/重排默认关；开启本地 e5 后 30 条改写探针 top-6 80%，但 `probe` 仍是自动出题，不能单独证明泛化。
 - 影响：开箱即用的长会话召回不稳定，“换个说法”场景仍会漏。
 - 根因：增强链默认关闭、没有推荐档；公共基准已跑 LongMemEval-S 48 题，但仍是证据召回而不是答案准确率；独立消息索引与多语言向量已落地，但抽取粒度仍是整轮切条。
 

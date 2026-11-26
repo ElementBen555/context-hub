@@ -17,3 +17,5 @@ tmp-smoke*
 *.tgz
 
 .npm-cache/
+tmp-*
+*.db-*

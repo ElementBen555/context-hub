@@ -398,7 +398,7 @@ window.__ModuleLoader__.load({
             h('button', {
               type: 'button', className: 'chp-mini-btn', title: '替换为新内容',
               onClick: () => {
-                const next = window.prompt('替换为：', item.text)
+                const next = window.prompt('替换为（原文未完整展示，请粘贴完整新内容）：', '')
                 if (next && next.trim().length > 0 && onAction) onAction({ action: 'supersede', id: item.id, text: next.trim() })
               },
             }, '替换')))))))
@@ -808,16 +808,30 @@ window.__ModuleLoader__.load({
           h('span', null, `${updated} · 打开时每 10s 刷新`))))
     }
 
+    async function readError(response) {
+      try {
+        const body = await response.json()
+        const message = body !== null && typeof body === 'object' ? (body.error ?? body.message) : undefined
+        return typeof message === 'string' && message.length > 0 ? message : `HTTP ${response.status}`
+      } catch {
+        return `HTTP ${response.status}`
+      }
+    }
+
     function Pill(props) {
       const sessionId = props.sessionId
       const [snapshot, setSnapshot] = React.useState(null)
       const [failed, setFailed] = React.useState(null)
       const [open, setOpen] = React.useState(false)
+      const busyRef = React.useRef(false)
 
       const load = React.useCallback((signal) => fetch(
         `${PATH}?sessionId=${encodeURIComponent(String(sessionId ?? ''))}&t=${Date.now()}`,
         { signal, credentials: 'same-origin' },
-      ).then(response => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
+      ).then(async response => {
+        if (response.ok) return response.json()
+        throw new Error(await readError(response))
+      })
         .then(json => {
           if (signal !== undefined && signal.aborted) return
           setSnapshot(json)
@@ -845,9 +859,11 @@ window.__ModuleLoader__.load({
       React.useEffect(() => { ensureStyle() }, [])
 
       const toggleWatermark = React.useCallback(async () => {
+        if (busyRef.current) return
         const current = snapshot !== null && snapshot.config !== null && snapshot.config !== undefined
           ? snapshot.config.watermark === true
           : false
+        busyRef.current = true
         try {
           const response = await fetch(WATERMARK_PATH, {
             method: 'POST',
@@ -855,14 +871,18 @@ window.__ModuleLoader__.load({
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ enabled: current !== true }),
           })
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          if (!response.ok) throw new Error(await readError(response))
           await load()
         } catch (error) {
           setFailed(String(error))
+        } finally {
+          busyRef.current = false
         }
       }, [snapshot, load])
 
       const reviewAction = React.useCallback(async (id, action) => {
+        if (busyRef.current) return
+        busyRef.current = true
         try {
           const response = await fetch(REVIEW_PATH, {
             method: 'POST',
@@ -870,14 +890,18 @@ window.__ModuleLoader__.load({
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ id, action }),
           })
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          if (!response.ok) throw new Error(await readError(response))
           await load()
         } catch (error) {
           setFailed(String(error))
+        } finally {
+          busyRef.current = false
         }
       }, [load])
 
       const runAction = React.useCallback(async (payload) => {
+        if (busyRef.current) return
+        busyRef.current = true
         try {
           const response = await fetch(ACTION_PATH, {
             method: 'POST',
@@ -885,18 +909,22 @@ window.__ModuleLoader__.load({
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
           })
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          if (!response.ok) throw new Error(await readError(response))
           await load()
         } catch (error) {
           setFailed(String(error))
+        } finally {
+          busyRef.current = false
         }
       }, [load])
 
-      const memory = snapshot !== null && snapshot.memory !== null ? snapshot.memory.active : undefined
-      const pending = snapshot !== null && snapshot.memory !== null ? snapshot.memory.pending : undefined
+      const memory = snapshot !== null && snapshot.memory !== null && snapshot.memory !== undefined ? snapshot.memory.active : undefined
+      const pending = snapshot !== null && snapshot.memory !== null && snapshot.memory !== undefined ? snapshot.memory.pending : undefined
       const pressure = snapshot !== null && snapshot.session !== null ? snapshot.session.pressure : undefined
       const contextWindow = snapshot !== null && snapshot.session !== null ? snapshot.session.contextWindow : undefined
-      const percent = pressure !== undefined && contextWindow ? Math.round((pressure / contextWindow) * 100) : undefined
+      const percent = pressure !== undefined && contextWindow
+        ? Math.max(0, Math.min(100, Math.round((pressure / contextWindow) * 100)))
+        : undefined
 
       const label = snapshot === null
         ? (failed === null ? '上下文中枢 · 载入…' : '上下文中枢 · 不可用')

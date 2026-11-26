@@ -76,7 +76,7 @@ DSH 的上下文流水线本来就有三个环节，但分别散在不同插件�
                     └──────────────────────────────┘
                                    ▲
         /context-hub search|remember|status ──┐
-        context_hub_* 四个工具 ────────────────┘
+        context_hub_* 十二个工具 ───────────────┘
 ```
 
 组件清单：
@@ -212,7 +212,7 @@ CREATE INDEX IF NOT EXISTS memories_kind ON memories(kind);
 
 | 依赖 | 用法 | 备注 |
 | --- | --- | --- |
-| `ctx.tools.register` | 注册 4 个工具 | `parameters` / `output.schema` 必须是**标准 JSON Schema** |
+| `ctx.tools.register` | 注册 12 个工具 | `parameters` / `output.schema` 必须是**标准 JSON Schema** |
 | `ctx.commands.register` | 注册 `/context-hub` | `handler(invocation)` 返回 `{kind, text, sourceEventSeq?}` |
 | `ctx.on('session/event')` | 监听 `user/message`、`turn/end` | 只读，不改事件 |
 | `ctx.on('session/disposed')` | 清理会话状态 | 防 WeakMap 之外的残留 |
@@ -228,7 +228,7 @@ CREATE INDEX IF NOT EXISTS memories_kind ON memories(kind);
 JsonSchemaError: unsupported JSON schema: schema.properties.text.required is not supported on type "string"
 ```
 
-插件随后**静默不激活**（application: failed），工具不会出现。修法见 `TEXT_OUTPUT` 与四个工具的 `parameters`。
+插件随后**静默不激活**（application: failed），工具不会出现。修法见 `TEXT_OUTPUT` 与十二个工具的 `parameters`。
 
 ---
 
@@ -243,10 +243,13 @@ JsonSchemaError: unsupported JSON schema: schema.properties.text.required is not
 代码内常量（改需重载）：
 
 ```js
-RECALL_MAX_CHARS = 1800  // 单次召回注入的字符预算（可配置）
-RECALL_MAX_ITEMS = 4     // 单次召回条数
-EXTRACT_MAX_INPUT = 8000 // 抽取时对话切片上限
-maxTokens: 600           // 抽取输出上限
+RECALL_MAX_CHARS = 1800   // 单次召回注入的字符预算（可配置）
+RECALL_MAX_ITEMS = 8      // 单次召回条数
+RECALL_MAX_TOKENS = 1200  // 单次注入 token 硬顶（中文按 ~1.6 字符/token 估）
+RECALL_TIMEOUT_MS = 4000  // 召回总时限
+EXTRACT_MAX_INPUT = 8000  // 抽取时对话切片上限
+EXTRACT_TIMEOUT_MS = 60000// 单次抽取超时，超时释放 latch
+maxTokens: 600            // 抽取输出上限
 ```
 
 > 0.1.0 没有 Config schema；要可视化配置需要导出 `Config`（Schemastery），属于路线图。
@@ -314,8 +317,8 @@ context-hub/
 
 - 注入消息显式标注「仅供参考、可能过时；与当前对话冲突时以当前对话为准」，`source = {kind:'context-hub', form:'recall'}`，模型和审计都能区分来源。
 - 插件**不写会话日志**、不新增事件类型、不改 system prompt，因此可随时停用而不留一致性债。
-- 工具全部只读或只写自有库，不发起网络请求；抽取走宿主 `llm` 服务，不直连 API。
-- 记忆库是本地文件（默认 0644 由 umask 决定），包含对话摘要性内容；共享机器上建议 `chmod 600` 或换 `DSH_CONTEXT_HUB_DB` 到私有目录。
+- 工具读写自有 SQLite；抽取/改写/重排走宿主 `llm` 服务，不直连 API。仅当显式启用 `embedding.enabled` 时才向配置的 OpenAI 兼容端点发 `POST /embeddings`，默认关闭。
+- 记忆库是本地文件（打开时 `chmod 0600`），包含对话摘要性内容；共享机器上仍建议把 `DSH_CONTEXT_HUB_DB` 放到私有目录。
 - 召回内容进入模型上下文，属于**不可信数据**：即使记忆库被投毒，标注与「以当前对话为准」的措辞可降低但不能消除影响。写入路径目前只有本插件的抽取提示词与显式 `remember`。
 
 ---
@@ -421,12 +424,12 @@ Rules:
 
 ## 14. 客户端面板（0.6.0）
 
-- 形态：`conversation.composer.dock`（session scope）里的一枚胶囊，点击用 `createPortal` 展开为只读面板；避开了右侧栏 tab 的 resource/address 机制，也不占用主面板。
+- 形态：`conversation.composer.dock`（session scope）里的一枚胶囊，点击用 `createPortal` 展开为四分区面板（概览/记忆/观测/配置）；上下文只读，面板可执行治理（forget/supersede/review）与开关（水位/压缩器/接管模式）。
 - 数据通道：宿主 `installStatusRoute()` 用 `ctx.inject(['connection'])` 注册 `GET /api/context-hub.status`（`connection.fetch.register`，`requestBody: 'buffered'`），鉴权由 connection 层负责（未认证 401）。处理函数按 `sessionId` 取 `sessions.get()`，复用 `statusSnapshot()`：tokenMeter 测量、`surfaceBreakdown()` 构成、`foldedStats()`、记忆 `counts()`/`recentActive()`、`eventCounts()`、压缩器状态与配置。
 - 客户端：手写 `window.__ModuleLoader__.load({id:'dsh-context-hub', factory(require){…}})`，只 require `react` / `react-dom`；`apply(ctx)` 里 `ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({id:'context-hub-status', order:2}, Pill))`；`package.json` 增加 `dsh.client {platform:'web', immediately:true, inject:['@deepseek-ai/dsh-client-locale']}` 与 `exports['./client']`。
 - 胶囊文案：`上下文中枢 · 上下文 N% · 记忆 M`；N 取 `pressureTokens / contextWindow`，M 取 active 数。加载失败时显示「不可用」且面板给出错误文本。
-- 面板刷新：打开后 10 秒轮询 + 手动刷新；关闭即停表并 abort 请求。样式全部内联，用系统色（`Canvas`/`CanvasText`/`Highlight`/`GrayText`）随明暗主题变化，不依赖主题变量。
-- 边界：只读；不写会话、不触发压缩、不提供 forget/supersede（写操作仍走工具与 `/context-hub`）。客户端文案暂未接 locale 服务（下一步与发布准备一起处理）。
+- 面板刷新：打开后 10 秒轮询 + 手动刷新；关闭即停表并 abort 请求。样式内联但全部取 DSH 主题 token（`--dsw-alias-*`，带兜底值），深色/浅色自动适配。
+- 边界：不写会话日志、不触发压缩；治理写操作只改插件自有 SQLite。客户端文案暂未接 locale 服务（文案仍硬编码中文）。
 - 验证：`node test-smoke.mjs` 断言假 ctx 下路由注册与 JSON 形状（`route: 1400 4 hub`）；线上 `curl` 路由返回 401，证明注册生效、鉴权在工作；浏览器面板需刷新页面后可见。
 
 ## 15. FTS5 混合检索与检索探针（0.7.0）

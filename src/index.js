@@ -57,6 +57,8 @@ export const defaults = {
   capacityPerScope: 5000,
   /** 每轮最多增量抽取次数，1..10。 */
   extractPassesPerTurn: 2,
+  /** 单次抽取调用的超时（毫秒）；超时中止本次抽取并释放 latch，避免永久卡住。 */
+  extractTimeoutMs: 60000,
   /** 写入门槛（0–1）；显式 remember 不受此限。 */
   admissionThreshold: 0.6,
   /** 冲突策略：evidence（新证据胜+决策并列）| recency（严格时间优先）。 */
@@ -141,6 +143,7 @@ export function resolveConfig(config) {
     recallTimeoutMs: intEnv('DSH_CONTEXT_HUB_RECALL_TIMEOUT_MS', defaults.recallTimeoutMs),
     sessionTtlDays: intEnv('DSH_CONTEXT_HUB_SESSION_TTL_DAYS', defaults.sessionTtlDays),
     extractPassesPerTurn: intEnv('DSH_CONTEXT_HUB_EXTRACT_PASSES', defaults.extractPassesPerTurn),
+    extractTimeoutMs: intEnv('DSH_CONTEXT_HUB_EXTRACT_TIMEOUT_MS', defaults.extractTimeoutMs),
     conflictPolicy: process.env.DSH_CONTEXT_HUB_CONFLICT_POLICY ?? defaults.conflictPolicy,
     compactor: process.env.DSH_CONTEXT_HUB_COMPACTOR ?? defaults.compactor,
     reviewPending: process.env.DSH_CONTEXT_HUB_REVIEW === '1',
@@ -219,6 +222,7 @@ export function resolveConfig(config) {
     globalTtlDays: clampInt(Number(merged.globalTtlDays), 0, 3650, defaults.globalTtlDays),
     capacityPerScope: clampInt(Number(merged.capacityPerScope), 100, 100000, defaults.capacityPerScope),
     extractPassesPerTurn: clampInt(Number(merged.extractPassesPerTurn), 1, 10, defaults.extractPassesPerTurn),
+    extractTimeoutMs: clampInt(Number(merged.extractTimeoutMs), 5000, 300000, defaults.extractTimeoutMs),
     admissionThreshold: Math.min(1, Math.max(0, Number(merged.admissionThreshold) || defaults.admissionThreshold)),
     conflictPolicy: policy,
     compactor: merged.compactor === 'hub' ? 'hub' : 'native',
@@ -668,7 +672,10 @@ export class MemoryStore {
           text, tags, content='memories', content_rowid='id', tokenize='trigram'
         )
       `)
-      this.rebuildFts()
+      // 只在首次建表/索引版本变化时全量重建；日常写入走 syncFtsRow 增量同步。
+      if (this.getKv('fts.marker') !== 'trigram-v2') {
+        if (this.rebuildFts()) this.setKv('fts.marker', 'trigram-v2')
+      }
       this.ftsReady = true
     } catch (error) {
       this.ftsReady = false
@@ -743,11 +750,16 @@ export class MemoryStore {
   }
 
   /** 与同 scope 的条目做相似度比较，返回最高相似度与对应行。 */
-  mostSimilar(text, scope, kind) {
+  mostSimilar(text, scope, kind, { project = '', sessionId = '' } = {}) {
     if (this.db === undefined) return { similarity: 0 }
+    if (scope === 'session' && sessionId.length === 0) return { similarity: 0 }
+    const filters = ["status = 'active'", 'scope = ?']
+    const params = [scope]
+    if (scope === 'project' && project.length > 0) { filters.push("(project = ? OR project = '')"); params.push(project) }
+    if (scope === 'session' && sessionId.length > 0) { filters.push('session_id = ?'); params.push(sessionId) }
     const rows = this.db.prepare(
-      "SELECT id, kind, text, confidence, created_at FROM memories WHERE status = 'active' AND scope = ? LIMIT 300",
-    ).all(scope)
+      `SELECT id, kind, text, confidence, created_at FROM memories WHERE ${filters.join(' AND ')} LIMIT 300`,
+    ).all(...params)
     const newTokens = tokens(text)
     let best = { similarity: 0 }
     for (const row of rows) {
@@ -826,6 +838,10 @@ export class MemoryStore {
     if (duplicate !== undefined && duplicate.status === 'active') {
       return { id: duplicate.id, action: 'duplicate' }
     }
+    // P0：已删除/拒绝/被替代的条目不能被同文写入“复活”；归档可以重新激活。
+    if (duplicate !== undefined && ['deleted', 'rejected', 'superseded'].includes(duplicate.status)) {
+      return { id: duplicate.id, action: 'duplicate', status: duplicate.status, reason: 'tombstoned' }
+    }
 
     const score = admissionScore(trimmed, safeKind, safeSource, evidence)
     const exempt = safeSource === 'explicit' || safeSource === 'compaction'
@@ -837,7 +853,7 @@ export class MemoryStore {
       ? Math.min(1, Math.max(0, Number(confidence)))
       : safeSource === 'explicit' ? 1 : safeSource === 'compaction' ? 0.95 : safeSource === 'tool' ? 0.8 : 0.6
 
-    const similar = this.mostSimilar(trimmed, safeScope, safeKind)
+    const similar = this.mostSimilar(trimmed, safeScope, safeKind, { project, sessionId })
     const conflict = similar.similarity >= 0.85 ? similar.row : undefined
     if (conflict !== undefined) {
       const bothDecisions = conflict.kind === 'decision' && safeKind === 'decision'
@@ -854,6 +870,10 @@ export class MemoryStore {
     const messageIdValue = String(messageId ?? '').slice(0, 200)
     // W5：高风险来源（自动抽取且置信 <0.8）在 reviewPending 开启时先入 pending，等待人工批准。
     const statusValue = this.config.reviewPending === true && safeSource === 'extracted' && confidenceValue < 0.8 ? 'pending' : 'active'
+    let inTx = false
+    try { this.db.exec('BEGIN'); inTx = true } catch { /* 已有事务时直接写 */ }
+    let id
+    try {
     const row = this.db.prepare(`
       INSERT INTO memories (hash, kind, text, tags, project, scope, session_id, confidence, source, evidence_seq, message_id, message_seq, sentence_no, valid_from, valid_to, status, created_at, last_used)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
@@ -862,7 +882,7 @@ export class MemoryStore {
         sentence_no = excluded.sentence_no, valid_from = excluded.valid_from, valid_to = 0
       RETURNING id
     `).get(hash, safeKind, trimmed, tags.join(','), project, safeScope, sessionId, confidenceValue, safeSource, evidence, messageIdValue, messageSeqValue, sentenceNoValue, validFromValue, validToValue, statusValue, createdAt)
-    const id = row?.id
+    id = row?.id
 
     if (conflict !== undefined && !(conflict.kind === 'decision' && safeKind === 'decision')) {
       this.db.prepare("UPDATE memories SET status = 'superseded', superseded_by = ?, valid_to = ? WHERE id = ?").run(id, createdAt, conflict.id)
@@ -870,6 +890,11 @@ export class MemoryStore {
     // W2：与新记忆最相似的旧记忆连一条 related 边（同 scope 才连，避免跨项目串味）。
     if (similar.row !== undefined && similar.row.id !== undefined && similar.row.id !== id && similar.similarity >= 0.4) {
       this.addLink(id, similar.row.id, 'related', Math.min(1, similar.similarity))
+    }
+    if (inTx) this.db.exec('COMMIT')
+    } catch (error) {
+      if (inTx) { try { this.db.exec('ROLLBACK') } catch { /* 忽略 */ } }
+      throw error
     }
     this.enforceCapacity()
     this.syncFtsRow(id, trimmed, tags.join(','))
@@ -1030,7 +1055,7 @@ export class MemoryStore {
   }
 
   /** 排序并给出逐项打分明细；search 与 explain 共用同一套逻辑。 */
-  rank(query, { limit = 6, project = '', includeAll = false, includeInactive = false, embVec = null } = {}) {
+  rank(query, { limit = 6, project = '', sessionId = '', includeAll = false, includeInactive = false, embVec = null } = {}) {
     if (this.db === undefined) return []
     const queryTokens = expandQueryTokens(query)
     if (queryTokens.size === 0) return []
@@ -1038,7 +1063,13 @@ export class MemoryStore {
     const statusClause = includeInactive ? '' : " AND status = 'active'"
     const rows = []
     for (const scope of scopes) {
-      if (scope === 'project' && project.length > 0) {
+      if (scope === 'session') {
+        // session 记忆只在它自己的会话里可见；没有会话上下文时一条都不取，避免跨会话串味。
+        if (sessionId.length === 0) continue
+        rows.push(...this.db.prepare(
+          `SELECT * FROM memories WHERE scope = 'session' AND session_id = ?${statusClause} ORDER BY last_used DESC, created_at DESC LIMIT ${CANDIDATE_WINDOW}`,
+        ).all(sessionId))
+      } else if (scope === 'project' && project.length > 0) {
         rows.push(...this.db.prepare(
           `SELECT * FROM memories WHERE scope = 'project' AND (project = ? OR project = '')${statusClause} ORDER BY last_used DESC, created_at DESC LIMIT ${CANDIDATE_WINDOW}`,
         ).all(project))
@@ -1055,9 +1086,15 @@ export class MemoryStore {
       const extra = [...ftsMap.keys()].filter(id => !seen.has(id)).slice(0, 50)
       if (extra.length > 0) {
         const placeholders = extra.map(() => '?').join(',')
+        // FTS 补入的行同样要过作用域过滤，否则会绕过 session/project 隔离。
+        const visible = row => {
+          if (row.scope === 'session') return sessionId.length > 0 && row.session_id === sessionId
+          if (row.scope === 'project') return project.length === 0 || row.project === project || row.project === ''
+          return true
+        }
         rows.push(...this.db.prepare(
           `SELECT * FROM memories WHERE id IN (${placeholders})${statusClause}`,
-        ).all(...extra))
+        ).all(...extra).filter(visible))
       }
     }
     const embMin = this.config.embedding.minScore
@@ -1316,7 +1353,7 @@ export class MemoryStore {
    * 检索探针：从 active 记忆里取稀有词元自造查询，检查原条目能否被召回（位置）。
    * 返回 { total, hits, rate, cases }；rate 为 top-k 命中率。
    */
-  probe({ limit = 10, project = '' } = {}) {
+  probe({ limit = 10, project = '', sessionId = '' } = {}) {
     if (this.db === undefined) return { total: 0, hits: 0, rate: 0, cases: [] }
     const rows = this.db.prepare(
       "SELECT id, text, kind, scope, project FROM memories WHERE status = 'active' AND length(text) >= 8 ORDER BY last_used DESC, id DESC LIMIT 200",
@@ -1330,7 +1367,7 @@ export class MemoryStore {
         .slice(0, 2)
       if (rare.length === 0) continue
       const query = rare.join(' ')
-      const hits = this.rank(query, { limit: this.config.recallMaxItems, project: row.project || project })
+      const hits = this.rank(query, { limit: this.config.recallMaxItems, project: row.project || project, sessionId: row.scope === 'session' ? row.session_id : sessionId })
       const position = hits.findIndex(hit => hit.id === row.id)
       cases.push({
         id: row.id,
@@ -1502,6 +1539,23 @@ export class MemoryStore {
   enforceCapacity() {
     if (this.db === undefined) return
     for (const scope of SCOPE_VALUES) {
+      if (scope === 'session') {
+        // 会话记忆按 (session_id) 分别限容，避免一个长会话把别的会话挤掉。
+        const groups = this.db.prepare(
+          "SELECT session_id AS sid, COUNT(*) AS n FROM memories WHERE scope = 'session' AND status = 'active' GROUP BY session_id HAVING n > ?",
+        ).all(this.config.capacityPerScope)
+        for (const group of groups) {
+          const overflow = Number(group.n ?? 0) - this.config.capacityPerScope
+          if (overflow <= 0) continue
+          this.db.prepare(
+            `UPDATE memories SET status = 'archived' WHERE id IN (
+               SELECT id FROM memories WHERE scope = 'session' AND session_id = ? AND status = 'active'
+               ORDER BY COALESCE(NULLIF(last_used, 0), created_at) ASC LIMIT ?
+             )`,
+          ).run(group.sid, overflow)
+        }
+        continue
+      }
       const row = this.db.prepare(
         "SELECT COUNT(*) AS n FROM memories WHERE scope = ? AND status = 'active'",
       ).get(scope)
@@ -1514,6 +1568,7 @@ export class MemoryStore {
          )`,
       ).run(scope, overflow)
     }
+    // 清理空会话的悬挂计数没有意义：只做归档，不删除行（审计链保留）。
   }
 }
 
@@ -1914,13 +1969,13 @@ async function maybeRecall(ctx, store, session, event) {
   const searchText = rewritten === null ? text : `${text} ${rewritten}`
   if (rewritten !== null) via = 'query+rewrite'
   const queryVec = timeLeft() > 120 ? await store.embedQuery(searchText) : null
-  let hits = store.search(searchText, { limit: store.config.recallMaxItems * 3, project, embVec: queryVec }).filter(usable)
+  let hits = store.search(searchText, { limit: store.config.recallMaxItems * 3, project, sessionId: session.id, embVec: queryVec }).filter(usable)
   if (hits.length === 0) {
     const context = recentContext(session, event.seq)
     if (context.length > 0) {
       via = 'context'
       const contextVec = timeLeft() > 120 ? await store.embedQuery(context) : null
-      hits = store.search(context, { limit: store.config.recallMaxItems * 3, project, embVec: contextVec }).filter(usable)
+      hits = store.search(context, { limit: store.config.recallMaxItems * 3, project, sessionId: session.id, embVec: contextVec }).filter(usable)
     }
   }
   hits = await rerankHits(ctx, store, session, text, hits, agent, deadline)
@@ -2517,6 +2572,7 @@ async function extractMemories(ctx, store, session) {
         maxTokens: 600,
         sessionId: session.id,
         purpose: 'context-hub:extract',
+        signal: AbortSignal.timeout(config.extractTimeoutMs),
       })
       for await (const chunk of stream) {
         if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') output += chunk.text
@@ -2681,7 +2737,7 @@ async function recallExplainText(ctx, store, session, query, rewritten = null) {
   const config = store.config
   const searchText = rewritten === null ? query : `${query} ${rewritten}`
   const embVec = await store.embedQuery(searchText)
-  let hits = store.explain(searchText, { project: session === undefined ? '' : projectOf(session, store), embVec })
+  let hits = store.explain(searchText, { project: session === undefined ? '' : projectOf(session, store), sessionId: session?.id ?? '', embVec })
   let messageHits = []
   if (session !== undefined) {
     try { store.indexSession(session, session.seq) } catch { /* 索引失败不阻塞 explain */ }
@@ -3168,6 +3224,7 @@ function defineTools(ctx, store) {
         limit: Math.max(limit, store.config.rerank.enabled === true ? store.config.rerank.candidates : 0),
         includeAll: args?.all === true,
         project: session === undefined ? '' : projectOf(session, store),
+        sessionId: session?.id ?? '',
         embVec,
       })
       if (store.config.rerank.enabled === true) {
@@ -3643,6 +3700,7 @@ function defineCommand(ctx, store) {
         let hits = store.search(argument, {
           limit: store.config.rerank.enabled === true ? Math.max(10, store.config.rerank.candidates) : 10,
           project: session === undefined ? '' : projectOf(session, store),
+          sessionId: session?.id ?? '',
           embVec,
         })
         if (store.config.rerank.enabled === true) {
@@ -3766,7 +3824,7 @@ function defineCommand(ctx, store) {
             sourceEventSeq: result.summarySeq,
           }
         } catch (error) {
-          if (invocation.signal.aborted) return { kind: 'error', text: '压缩已取消。' }
+          if (invocation.signal?.aborted) return { kind: 'error', text: '压缩已取消。' }
           return { kind: 'error', text: `压缩失败：${error instanceof Error ? error.message : String(error)}` }
         }
       }

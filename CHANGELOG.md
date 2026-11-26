@@ -1,5 +1,13 @@
 # 变更记录
 
+## 1.6.1（2026-11-26）
+
+- **P0 修复**：遗忘/拒绝/被替换的记忆不再被同文写入复活（墓碑守卫）；`session` 作用域记忆按 `session_id` 隔离（关键词、FTS 补入、容量淘汰、mostSimilar 全部加过滤）。
+- **P1 修复**：抽取调用加 60s 超时并释放 latch；`insert()` 的 upsert/supersede/连边包进事务；FTS 重建只在首次/升级时执行；`probe`/`explain`/工具/命令全部透传 sessionId；`invocation.signal` 可选链。
+- **面板与 embed**：替换提示不再预填被截断的 160 字文本；写操作加 in-flight 防重；HTTP 错误体透传；百分比 clamp；embed 服务校验 body/单条上限、超限 413、模型加载去重、监听错误与 SIGTERM 处理。
+- **文档与包**：README/spec/design/INSTALL/comparison 与 1.6.1 实现对齐（8/1800、6 轮冷却、抽取 2、0600、12 个工具、主题 token、embedding 默认空）；`engines.node >= 22.13`、`npm test`/`bench`/`stress`/`concurrency` 脚本、仓库地址修正；`.gitignore` 覆盖临时库与构建产物；仓库清理临时 DB/exports。
+- 打包：29 文件、247,806 字节、SHA-256 `2916ca3730fd3d3c9f4bb181174df2aeef6ccb739a9c694a3c206fc785dcc46a`。
+
 ## 1.6.0
 
 - **召回硬顶与超时**：单次召回注入新增 `recallMaxTokens`（默认 1200，按 ~1.6 字符/token 粗估）与 `recallTimeoutMs`（默认 4000ms）；改写/重排/向量只在剩余时间内执行，超时本次不注入并记 `recall-timeout`。`status` 显示「硬顶 N tokens/超时 M ms」。
