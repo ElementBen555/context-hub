@@ -1,0 +1,67 @@
+{
+  "name": "dsh-context-hub",
+  "version": "1.6.0",
+  "private": false,
+  "type": "module",
+  "description": "SQLite 记忆 + 关键词/FTS5/可选向量 + LLM 改写/重排 + 可选的 8 段压缩器与水位接管 + Web 面板",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./embed/*": "./embed/*"
+  },
+  "files": [
+    "src",
+    "client",
+    "cordis.patch.yml",
+    "locale",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "docs",
+    "scripts",
+    "test-smoke.mjs",
+    "embed/server.mjs",
+    "embed/package.json",
+    "embed/start.sh",
+    "embed/stop.sh",
+    "embed/README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "context",
+    "memory",
+    "compaction",
+    "observability"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dsh-market/dsh-context-hub.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

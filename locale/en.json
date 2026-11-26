@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Context hub",
+    "description": "Compression, memory, and context insight in one plugin: SQLite-backed recall, auto-extraction, an optional 8-section compactor, and a read-only status panel."
+  }
+}

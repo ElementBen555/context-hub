@@ -1,0 +1,4 @@
+# dsh-context-hub bundle patch：把一个插件插进 profile 的层叠。
+- insert:
+    - id: dsh-context-hub
+      name: 'dsh-context-hub'
