@@ -255,5 +255,11 @@
  "watermarkOn": "ein",
  "watermarkTitle": "Wasserstand: {0}",
  "yes": "Ja",
- "autoDetectDesc": "Systemsprache folgen"
+ "autoDetectDesc": "Systemsprache folgen",
+ "presetCallout": "Semantischer Abruf ist aus: nur Schlüsselwörter + FTS5",
+ "presetApply": "Aktivieren",
+ "prefixCacheLabel": "Präfix-Cache",
+ "prefixCacheValue": "cache read {0}% (letzte {1} Proben)",
+ "watermarkUndo": "Letzte Faltung rückgängig",
+ "watermarkLimits": "max. {0} Tokens pro Faltung · Ziel {1}%"
 }

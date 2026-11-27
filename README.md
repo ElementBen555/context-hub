@@ -73,6 +73,7 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 
 ## 已验证
 
+- **1.9.0**：P0/P1 落地——`/context-hub doctor apply` 推荐档（探测本地向量 + e5 前缀 + 重算向量）、纯拉丁查询向量优先（en-holdout R@5 75% → **93.8%**，R@10 100%）、前缀缓存命中统计（status/面板）、水位授权上限 + `watermark undo`、水位目标占用率选区；smoke 覆盖 4 项新行为。
 - **1.8.1**：面板 7 语言（zh/en/ja/ko/de/fr/es，257 词条/语言）支持即时切换与持久化；四份使用文档补齐 6 语言译文（`docs/i18n/`）；新增 `test:panel-i18n` / `check:locales` / `test:docs-i18n` 回归。
 - **1.8.0**：完成所有 P1/P2 补强任务（A1/A3/A4/B5/C4/C5/E4/A5/E3/E5/D4/D5），新增 5 个命令（export-jsonl/import-jsonl/graph/timeline/conflicts）、JSONL 导出/导入、记忆视图、兼容性文档。
 - **1.7.4**：面板压缩器 native ⇄ hub 可切换并持久化，失败返回 409；冒烟覆盖路由与快照。
@@ -111,6 +112,7 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 ```
 /context-hub status                  # 洞察：上下文压力 / 折叠区间 / 记忆库
 /context-hub doctor                  # 自检：FTS5/向量/改写/重排能力与推荐档
+/context-hub doctor apply            # 推荐档落地：探测本地向量服务并启用（e5 自动补前缀）
 /context-hub mode [observe|assist|takeover|full]  # 接管分级
 /context-hub decompress [id:<编号>|起始seq] [结束seq]  # 按摘要区间还原原文
 /context-hub search 关键词            # 检索长期记忆
@@ -129,6 +131,7 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 /context-hub compactor <hub|native>  # 运行时切换压缩器（失败回退原生）
 /context-hub reembed                 # 重算全部向量（换模型后）
 /context-hub watermark [on|off]      # 水位压缩开关（持久化）
+/context-hub watermark undo          # 撤销最近一次水位折叠（原文重新注入）
 /context-hub config [键] [值]         # 查看/修改召回预算、TTL、抽取、冲突、语义开关（持久化）
 /context-hub watermark [on|off]      # 水位压缩开关（持久化到记忆库）
 /context-hub review                  # 待审核列表（reviewPending 开启时）
@@ -171,6 +174,8 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 | `embedding.baseUrl` / `DSH_CONTEXT_HUB_EMBED_URL` | 空 | OpenAI 兼容端点，可带或不带 `/embeddings` 后缀 |
 | `embedding.model` / `DSH_CONTEXT_HUB_EMBED_MODEL` | 空 | 端点要求的模型名 |
 | `embedding.dtype` / `DSH_CONTEXT_HUB_EMBED_DTYPE` | `fp32` | 量化模型用 `q8`；自动拉起 `embed/server.mjs` 时经 `EMBED_DTYPE` 透传 |
+| `embedding.queryPrefix` / `DSH_CONTEXT_HUB_QUERY_PREFIX` | 空 | 查询侧指令前缀；e5 系列用 `query: `（`doctor apply` 自动补） |
+| `embedding.docPrefix` / `DSH_CONTEXT_HUB_DOC_PREFIX` | 空 | 文档侧指令前缀；e5 系列用 `passage: `，与查询前缀必须配套 |
 | `embedding.autoStart` / `DSH_CONTEXT_HUB_EMBED_AUTOSTART` | true | 仅回环地址生效：服务未启动时由插件拉起 `embed/server.mjs`；设 `0` 关闭 |
 | `embedding.apiKeyEnv` | `DSH_CONTEXT_HUB_EMBED_KEY` | 从该环境变量读 Bearer key；空则不发送 Authorization |
 | `embedding.minScore` | 0.35 | 0–0.95，cosine 低于此值不计入 |
@@ -183,6 +188,8 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 | `watermark.triggerRatio` | 0.7 | 0.3–0.95，压力达到即触发 |
 | `watermark.retainTokens` | 20000 | 2000–200000，压缩时保留的尾部 tokens |
 | `watermark.cooldownTurns` | 1 | 0–20，两次水位压缩至少间隔的轮数 |
+| `watermark.maxRegionTokens` | 30000 | 0–500000；单次折叠授权上限，超过则跳过并记 `watermark-skip`（0=不限） |
+| `watermark.targetRatio` | 0.6 | 0.3–0.95；折叠后目标占用率，用来决定选区大小（选区权增强） |
 | `unfold.steps` | 3 | 1–20；一次 unfold 覆盖的步数 |
 | `unfold.maxChars` | 8000 | 1000–20000；每步用于替代摘要的原文预算 |
 | `embedding.queryPrefix` | 空 | 可选：查询侧指令前缀（部分 BGE 检索模型建议加；实测 base 加后更差，默认不加） |

@@ -1,0 +1,39 @@
+{
+  "name": "en-holdout",
+  "facts": [
+    { "id": "e1", "text": "We install dependencies with pnpm rather than npm so lockfiles never mix." },
+    { "id": "e2", "text": "The production database listens on 5432 while staging uses 6543." },
+    { "id": "e3", "text": "Retries use exponential backoff capped at thirty seconds." },
+    { "id": "e4", "text": "Deploys happen after ten in the evening on Wednesdays." },
+    { "id": "e5", "text": "Session memories expire after seven days; project memories last ninety days." },
+    { "id": "e6", "text": "The service must never write API keys into logs." },
+    { "id": "e7", "text": "Feature flags are evaluated on the server, never in the browser." },
+    { "id": "e8", "text": "Images are resized to 1600 pixels wide before upload." },
+    { "id": "e9", "text": "The mobile client is built with React Native." },
+    { "id": "e10", "text": "Nightly backups run at 2am and keep fourteen days of history." },
+    { "id": "e11", "text": "Only the on-call engineer may approve a hotfix." },
+    { "id": "e12", "text": "Search results are capped at two hundred rows per page." },
+    { "id": "e13", "text": "The API rate limit is one hundred requests per minute per token." },
+    { "id": "e14", "text": "We run Postgres 16 with the pgvector extension." },
+    { "id": "e15", "text": "Customer emails are encrypted at rest with AES-256." },
+    { "id": "e16", "text": "The design system ships a dark theme by default." }
+  ],
+  "queries": [
+    { "query": "which package manager should I use", "expected": ["e1"] },
+    { "query": "what port does the staging database use", "expected": ["e2"] },
+    { "query": "how long is the maximum retry delay", "expected": ["e3"] },
+    { "query": "when do we ship to production", "expected": ["e4"] },
+    { "query": "how long are project memories kept", "expected": ["e5"] },
+    { "query": "are secrets allowed in log output", "expected": ["e6"] },
+    { "query": "where are feature flags evaluated", "expected": ["e7"] },
+    { "query": "what width do uploaded images get resized to", "expected": ["e8"] },
+    { "query": "what framework powers the mobile app", "expected": ["e9"] },
+    { "query": "how many days of backups do we retain", "expected": ["e10"] },
+    { "query": "who can sign off a hotfix", "expected": ["e11"] },
+    { "query": "how many search results fit on one page", "expected": ["e12"] },
+    { "query": "what is the api rate limit", "expected": ["e13"] },
+    { "query": "which database and extension do we run", "expected": ["e14"] },
+    { "query": "how are customer emails protected at rest", "expected": ["e15"] },
+    { "query": "what theme is default in the design system", "expected": ["e16"] }
+  ]
+}

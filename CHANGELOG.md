@@ -1,3 +1,28 @@
+## 1.9.0
+
+### 新增（P0）
+
+- `/context-hub doctor apply`：推荐档一键落地——探测 `127.0.0.1:11434` 本地向量服务，写入 `embedding.baseUrl/model` 并启用；e5 系列自动补 `query: ` / `passage: ` 指令前缀，必要时清空旧向量后台重算。
+- `embedding.docPrefix`（文档侧前缀）与 `embedding.queryPrefix` 配套；`config` 命令支持 string/prefix 类型。
+- 纯拉丁（英文）查询改为**向量优先**排序：词法只做小权重并列，避免短词重叠把语义命中挤出前 5。en-holdout 实测 R@5 75% → **93.8%**、R@10 100%、MRR 0.719 → 0.822；中文 zh-holdout 仍 100%。
+- 语义检索未启用时：`status` 给出 `doctor apply` 提示，面板概览显示「一键开启」提示条。
+
+### 新增（P1）
+
+- **前缀缓存指标**：`status` 与面板显示最近请求的 `cache read / input` 命中率（来自宿主 usage，无则显示空）。
+- **水位授权上限**：`watermark.maxRegionTokens`（默认 30000，0=不限）；超限不折叠，记 `watermark-skip` 事件并给出告警。
+- **水位撤销**：`/context-hub watermark undo` 与面板「撤销上次折叠」按钮——把最近一次折叠区间原文重新注入（折叠本身由原生完成，不可回滚）。
+- **选区权增强**：`watermark.targetRatio`（默认 0.6），按「折叠后目标占用率」扩张选区，并始终保留尾部 `retainTokens`/`retainTurns`。
+- `planWatermarkRegion()` 导出为纯函数，便于单测与复用。
+
+### 测试
+
+- 冒烟新增：推荐档持久化（含 e5 前缀）、前缀缓存统计（70% 命中）、水位规划（目标占用、授权上限、节点不足）、无记录时 `watermark undo` 安全失败。
+
+### 文档
+
+- `docs/EVAL.md` 增加 en-holdout 与复跑命令；README 配置表补 4 项、命令补 2 条。
+
 ## 1.8.1
 
 ### 新增

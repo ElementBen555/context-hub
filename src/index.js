@@ -69,12 +69,14 @@ export const defaults = {
   compactor: 'native',
   reviewPending: false,
   /** 向量召回（可选）：OpenAI 兼容 /embeddings 端点；关闭时只用关键词 + FTS5。 */
-  embedding: { enabled: false, baseUrl: '', model: '', apiKeyEnv: 'DSH_CONTEXT_HUB_EMBED_KEY', minScore: 0.35, timeoutMs: 1500, autoStart: true, fusion: 'weighted', dtype: 'fp32' },
+  embedding: { enabled: false, baseUrl: '', model: '', apiKeyEnv: 'DSH_CONTEXT_HUB_EMBED_KEY', minScore: 0.35, timeoutMs: 1500, autoStart: true, fusion: 'weighted', dtype: 'fp32', queryPrefix: '', docPrefix: '' },
   /** 查询改写（可选）：一次 LLM 调用把查询扩成同义词/英文关键词；失败回退原查询。 */
   rewrite: { enabled: false, provider: '', model: '', maxTokens: 1200, timeoutMs: 12000, cacheSize: 128 },
   rerank: { enabled: false, provider: '', model: '', candidates: 6, maxTokens: 600, timeoutMs: 8000, reasoningEffort: '' },
-  /** 压缩水位（可选，实验）：插件在 pre-step 主动选区间压缩；默认关闭，失败回退原生。 */
-  watermark: { enabled: false, triggerRatio: 0.7, retainTokens: 20000, retainTurns: 0, cooldownTurns: 1, minRegionNodes: 4 },
+  /** 压缩水位（可选，实验）：插件在 pre-step 主动选区间压缩；默认关闭，失败回退原生。
+   *  maxRegionTokens：单次折叠授权上限（超过则跳过并记 watermark-skip，0=不限制）；
+   *  targetRatio：折叠后目标占用率，用于决定选区大小（0.3–0.95）。 */
+  watermark: { enabled: false, triggerRatio: 0.7, targetRatio: 0.6, retainTokens: 20000, retainTurns: 0, cooldownTurns: 1, minRegionNodes: 4, maxRegionTokens: 30000 },
   /** 消息级展开：用原文临时替代压缩摘要的步数与字符预算。 */
   unfold: { steps: 3, maxChars: 8000 },
   /** 接管分级：auto 保持旧行为；observe/assist/takeover/full 显式组合 compactor 与水位。 */
@@ -83,6 +85,8 @@ export const defaults = {
   reviewPolicy: 'low-confidence',
   /** 国际化：默认跟随系统语言。 */
   locale: 'auto',
+  /** 推荐档：manual（全部 opt-in）| recommended（启动时按可用能力给出建议并可一键落地）。 */
+  preset: 'manual',
 }
 
 
@@ -99,8 +103,14 @@ const CONFIG_EDITABLE = {
   extractPassesPerTurn: { kind: 'int', min: 1, max: 10 },
   conflictPolicy: { kind: 'enum', values: ['evidence', 'recency'] },
   'embedding.enabled': { kind: 'bool' },
+  'embedding.baseUrl': { kind: 'string', maxLength: 300 },
+  'embedding.model': { kind: 'string', maxLength: 120 },
+  'embedding.queryPrefix': { kind: 'prefix', maxLength: 40, allowEmpty: true },
+  'embedding.docPrefix': { kind: 'prefix', maxLength: 40, allowEmpty: true },
   'rewrite.enabled': { kind: 'bool' },
   'rerank.enabled': { kind: 'bool' },
+  'watermark.maxRegionTokens': { kind: 'int', min: 0, max: 500000 },
+  'watermark.targetRatio': { kind: 'ratio', min: 0.3, max: 0.95 },
   locale: { kind: 'enum', values: ['auto', ...SUPPORTED_LOCALES] },
 }
 
@@ -130,6 +140,22 @@ function normalizeConfigValue(spec, raw) {
     const n = Number(raw)
     if (!Number.isFinite(n)) return undefined
     return Math.min(spec.max, Math.max(spec.min, Math.round(n)))
+  }
+  if (spec.kind === 'prefix') {
+    // 指令前缀保留空白（"query: " 的尾随空格是模型约定的一部分）
+    const text = String(raw ?? '')
+    if (text.trim() === '' && spec.allowEmpty !== true) return undefined
+    return text.slice(0, spec.maxLength ?? 40)
+  }
+  if (spec.kind === 'string') {
+    const text = String(raw ?? '').trim()
+    if (text === '' && spec.allowEmpty !== true) return undefined
+    return text.slice(0, spec.maxLength ?? 200)
+  }
+  if (spec.kind === 'ratio') {
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return undefined
+    return Math.round(Math.min(spec.max, Math.max(spec.min, n)) * 100) / 100
   }
   if (spec.kind === 'enum') {
     const n = Number(raw)
@@ -252,6 +278,7 @@ export function resolveConfig(config) {
     model: String(process.env.DSH_CONTEXT_HUB_EMBED_MODEL ?? rawEmbed.model ?? '').trim(),
     apiKeyEnv: String(rawEmbed.apiKeyEnv ?? defaults.embedding.apiKeyEnv),
     queryPrefix: String(process.env.DSH_CONTEXT_HUB_QUERY_PREFIX ?? rawEmbed.queryPrefix ?? '').trim(),
+    docPrefix: String(process.env.DSH_CONTEXT_HUB_DOC_PREFIX ?? rawEmbed.docPrefix ?? '').trim(),
     minScore: Math.min(0.95, Math.max(0, Number(process.env.DSH_CONTEXT_HUB_EMBED_MIN_SCORE ?? rawEmbed.minScore ?? defaults.embedding.minScore) || defaults.embedding.minScore)),
     timeoutMs: clampInt(Number(rawEmbed.timeoutMs), 200, 15000, defaults.embedding.timeoutMs),
     autoStart: process.env.DSH_CONTEXT_HUB_EMBED_AUTOSTART === '0'
@@ -293,7 +320,10 @@ export function resolveConfig(config) {
     retainTurns: clampInt(Number(process.env.DSH_CONTEXT_HUB_RETAIN_TURNS ?? rawWatermark.retainTurns), 0, 20, defaults.watermark.retainTurns),
     cooldownTurns: clampInt(Number(rawWatermark.cooldownTurns), 0, 20, defaults.watermark.cooldownTurns),
     minRegionNodes: clampInt(Number(rawWatermark.minRegionNodes), 2, 200, defaults.watermark.minRegionNodes),
+    maxRegionTokens: clampInt(Number(rawWatermark.maxRegionTokens), 0, 500000, defaults.watermark.maxRegionTokens),
+    targetRatio: Math.min(0.95, Math.max(0.3, Number(rawWatermark.targetRatio) || defaults.watermark.targetRatio)),
   }
+  const preset = ['manual', 'recommended'].includes(String(merged.preset)) ? String(merged.preset) : 'manual'
   const policy = merged.conflictPolicy === 'recency' ? 'recency' : 'evidence'
   const modeValue = process.env.DSH_CONTEXT_HUB_MODE ?? merged.mode
   const mode = ['observe', 'assist', 'takeover', 'full'].includes(modeValue) ? modeValue : 'auto'
@@ -322,6 +352,7 @@ export function resolveConfig(config) {
     compactor: merged.compactor === 'hub' ? 'hub' : 'native',
     reviewPending: merged.reviewPending === true,
     mode,
+    preset,
     embedding,
     rewrite,
     rerank,
@@ -1585,7 +1616,10 @@ export class MemoryStore {
   async embedAndStore(id, text) {
     if (this.db === undefined) return
     try {
-      const [vec] = await this.embedTexts([String(text)])
+      // 文档侧指令前缀（e5 需要 passage:，与「查询侧 query:」配套才有效）
+      const prefix = String(this.config.embedding.docPrefix ?? '')
+      const payload = prefix !== '' && !String(text).startsWith(prefix) ? prefix + text : String(text)
+      const [vec] = await this.embedTexts([payload])
       if (!Array.isArray(vec)) return
       this.db.prepare('UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?')
         .run(JSON.stringify(vec), this.config.embedding.model, id)
@@ -1594,6 +1628,44 @@ export class MemoryStore {
     } catch (error) {
       this.embedError = error instanceof Error ? error.message : String(error)
     }
+  }
+
+  /**
+   * P1：前缀缓存命中统计（来自宿主 usage.cacheRead / input）。
+   * @param {number} limit 参与统计的最近请求数。
+   */
+  prefixCacheStats(limit = 50) {
+    if (this.db === undefined) return { samples: 0, input: 0, cacheRead: 0, ratio: 0 }
+    const rows = this.recentEvents(Math.max(limit * 4, 200)).filter(row => row.kind === 'request')
+    let samples = 0
+    let input = 0
+    let cacheRead = 0
+    for (const row of rows.slice(0, limit)) {
+      try {
+        const usage = JSON.parse(row.detail)?.usage
+        const inTokens = Number(usage?.input) || 0
+        if (inTokens <= 0) continue
+        samples += 1
+        input += inTokens
+        cacheRead += Math.min(Number(usage?.cacheRead) || 0, inTokens)
+      } catch { /* 旧格式或坏行跳过 */ }
+    }
+    return { samples, input, cacheRead, ratio: input > 0 ? cacheRead / input : 0 }
+  }
+
+  /** P1：记录最近一次水位折叠，供 undo 使用。 */
+  recordWatermarkFold(entry) {
+    try { this.setKv('watermark.last', JSON.stringify(entry)) } catch { /* 记录失败不影响折叠 */ }
+  }
+
+  /** P1：读取最近一次水位折叠记录。 */
+  lastWatermarkFold() {
+    try {
+      const raw = this.getKv('watermark.last')
+      if (typeof raw !== 'string' || raw.length === 0) return undefined
+      const parsed = JSON.parse(raw)
+      return parsed !== null && typeof parsed === 'object' ? parsed : undefined
+    } catch { return undefined }
   }
 
   /** 启动时补齐历史条目缺失的向量（最多 200 条，后台执行）。 */
@@ -1711,6 +1783,11 @@ export class MemoryStore {
     }
     const embMin = this.config.embedding.minScore
     const fusion = this.config.embedding.fusion === 'rrf' ? 'rrf' : 'weighted'
+    // P0：英文/纯拉丁查询的向量优先。
+    // 词法对英文改写没有中文同义词表的帮助，短词重叠反而把语义命中挤出前 5；
+    // 实测 en-holdout：纯向量 R@5 93.8%，加权融合只有 81.3%。纯拉丁查询改以 cosine 为主，
+    // 词法只做小权重并列；含中文（或中英混排）时仍用加权融合。
+    const latinOnly = !/[\u4e00-\u9fff]/.test(String(query))
     const now = nowSeconds()
     const lambda = { session: 0.10, project: 0.01, global: 0.002 }
     const weight = { session: 1.0, project: 0.8, global: 0.6 }
@@ -1751,7 +1828,9 @@ export class MemoryStore {
         ftsBoost,
         lexicalBase,
         weightedEmb,
-        base: lexicalBase + ftsBoost + weightedEmb,
+        base: latinOnly && embVec !== null
+          ? (hasVector ? cos * 10 + lexicalBase * 0.2 + ftsBoost * 0.2 : lexicalBase * 0.5)
+          : lexicalBase + ftsBoost + weightedEmb,
         decay,
         usage,
         scopeWeight: weight[row.scope] ?? 1,
@@ -3063,6 +3142,108 @@ function estimateSeqTokens(session, seq) {
  * 水位压缩：压力达到 triggerRatio 时，自己选「保留尾部 retainTokens」的区间，
  * 调 compaction.compactRegion（原生负责校验配对/回放/摘要）。失败只记录，不阻塞。
  */
+/**
+ * P1：撤销最近一次水位折叠——把该区间的原文重新注入下一步。
+ *
+ * 折叠本身已由原生 compaction 完成、不可回滚；这里做的是「可逆」：原文再入上下文，
+ * 并在事件里记 watermark-undo，便于面板/审计看到这次回退。
+ *
+ * @returns {{ok: boolean, range?: {from: number, to: number}, chars?: number, error?: string}}
+ */
+function undoWatermark(ctx, store, session, inject) {
+  if (store.db === undefined) return { ok: false, error: '记忆库不可用' }
+  const last = store.lastWatermarkFold()
+  if (last === undefined) return { ok: false, error: '没有记录到水位折叠（先开 watermark 跑一次）' }
+  if (session === undefined) return { ok: false, error: '需要当前会话才能还原原文' }
+  const start = Number(last.start)
+  const end = Number(last.end)
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return { ok: false, error: '折叠记录损坏' }
+  const restored = restoreTranscript(session, start, end + 1, 4000)
+  if (restored.text.length === 0) return { ok: false, error: `seq ${start}-${end} 没有可还原的文本` }
+  if (typeof inject === 'function') inject(restoredMessage(restored))
+  store.logEvent('watermark-undo', {
+    sessionId: session.id ?? '',
+    tokens: restored.used,
+    detail: `seq ${restored.from}-${restored.to - 1}`,
+  })
+  return { ok: true, range: { from: restored.from, to: restored.to }, chars: restored.used }
+}
+
+/**
+ * P1：水位选区规划（纯函数，便于单测）。
+ *
+ * 规则：
+ *  - 保留尾部：retainTurns > 0 时只折叠「最后 N 个用户回合」之前的最旧前缀；否则按 retainTokens 保留尾部。
+ *  - 目标占用：若目标占用率 targetRatio 更低，需要多折叠一些，选区向后扩张到预计足以降到目标以下。
+ *  - 授权上限：选区 tokens 超过 maxRegionTokens（0=不限）时不折叠，返回 region-too-large。
+ *
+ * @returns {{start?: number, end?: number, regionTokens: number, projectedRatio: number, reason?: string}}
+ */
+export function planWatermarkRegion({ seqs, session, config, pressureTokens, contextWindow, estimate }) {
+  const empty = { regionTokens: 0, projectedRatio: contextWindow > 0 ? pressureTokens / contextWindow : 0 }
+  if (!Array.isArray(seqs) || seqs.length < (config.minRegionNodes ?? 4) + 2) return { ...empty, reason: 'too-few-nodes' }
+  const start = seqs[0]
+  let end
+  if (config.retainTurns > 0) {
+    const userSeqs = []
+    for (const seq of seqs) {
+      const event = session.eventAt?.(seq)
+      if (event?.type === 'user/message' && event.data?.source?.kind === 'user') userSeqs.push(seq)
+    }
+    if (userSeqs.length > config.retainTurns) {
+      const keepFrom = userSeqs[userSeqs.length - config.retainTurns]
+      const before = seqs.filter(seq => seq < keepFrom)
+      if (before.length < (config.minRegionNodes ?? 4)) return { ...empty, reason: 'too-few-nodes' }
+      end = before[before.length - 1]
+    }
+  }
+  const tokensUpTo = (bound) => {
+    let total = 0
+    for (const seq of seqs) {
+      if (bound !== undefined && seq > bound) break
+      total += estimate(seq)
+    }
+    return total
+  }
+  if (end === undefined) {
+    let retained = 0
+    let cut = seqs.length
+    for (let i = seqs.length - 1; i >= 0; i -= 1) {
+      retained += estimate(seqs[i])
+      cut = i
+      if (retained >= config.retainTokens) break
+    }
+    end = seqs[Math.max(0, cut - 1)]
+    // 目标占用率：若按保留尾部折叠后仍高于目标，则继续向后扩张选区（但不吃光尾部）。
+    const target = Number(config.targetRatio ?? 0.6)
+    if (contextWindow > 0 && target > 0 && target < 1) {
+      const needed = Math.max(0, pressureTokens - target * contextWindow)
+      let guard = 0
+      while (tokensUpTo(end) < needed && guard < seqs.length) {
+        const next = seqs.find(seq => seq > end)
+        if (next === undefined) break
+        // 至少保留 minRegionNodes 个尾部节点，避免把最近上下文全部折叠。
+        const remaining = seqs.filter(seq => seq > next).length
+        if (remaining < (config.minRegionNodes ?? 4)) break
+        end = next
+        guard += 1
+      }
+    }
+  }
+  if (start === undefined || end === undefined || start >= end) return { ...empty, reason: 'empty-region' }
+  const regionTokens = tokensUpTo(end)
+  const maxRegion = Number(config.maxRegionTokens ?? 0)
+  if (maxRegion > 0 && regionTokens > maxRegion) {
+    return { start, end, regionTokens, projectedRatio: contextWindow > 0 ? Math.max(0, (pressureTokens - regionTokens) / contextWindow) : 0, reason: 'region-too-large' }
+  }
+  return {
+    start,
+    end,
+    regionTokens,
+    projectedRatio: contextWindow > 0 ? Math.max(0, (pressureTokens - regionTokens) / contextWindow) : 0,
+  }
+}
+
 async function maybeWatermark(ctx, store, agent, signal) {
   const config = store.config.watermark
   if (config?.enabled !== true || agent?.session === undefined) return
@@ -3074,47 +3255,52 @@ async function maybeWatermark(ctx, store, agent, signal) {
   const pressure = meter.contextPressure(session)
   const window = Number(pressure?.contextWindow ?? 0)
   if (window <= 0) return
-  const ratio = Number(pressure.pressureTokens ?? 0) / window
+  const pressureTokens = Number(pressure.pressureTokens ?? 0)
+  const ratio = pressureTokens / window
   if (ratio < config.triggerRatio) return
   const state = stateOf(session)
   if (state.lastWatermarkTurn !== undefined && state.turn - state.lastWatermarkTurn < config.cooldownTurns) return
   const seqs = surfaceSeqs(session)
-  if (seqs.length < config.minRegionNodes + 2) return
-  const start = seqs[0]
-  let end
-  if (config.retainTurns > 0) {
-    // 对标“保留 N 轮 + 折叠”：只折叠最后 N 个用户回合之前的最旧前缀。
-    const userSeqs = []
-    for (const seq of seqs) {
-      const event = session.eventAt?.(seq)
-      if (event?.type === 'user/message' && event.data?.source?.kind === 'user') userSeqs.push(seq)
-    }
-    if (userSeqs.length > config.retainTurns) {
-      const keepFrom = userSeqs[userSeqs.length - config.retainTurns]
-      const before = seqs.filter(seq => seq < keepFrom)
-      if (before.length < config.minRegionNodes) return
-      end = before[before.length - 1]
-    }
+  const plan = planWatermarkRegion({
+    seqs,
+    session,
+    config,
+    pressureTokens,
+    contextWindow: window,
+    estimate: seq => estimateSeqTokens(session, seq),
+  })
+  if (plan.reason === 'region-too-large') {
+    // 授权上限：不折叠，只记录一次，避免每步重复尝试。
+    state.lastWatermarkTurn = state.turn
+    store.logEvent('watermark-skip', {
+      sessionId: session.id,
+      tokens: plan.regionTokens,
+      detail: `选区 ${plan.regionTokens} tokens 超过授权上限 ${config.maxRegionTokens}（watermark.maxRegionTokens；0=不限）`,
+    })
+    ctx.logger?.warn?.(`context-hub: watermark skipped, region ${plan.regionTokens} > maxRegionTokens ${config.maxRegionTokens}`)
+    return
   }
-  if (end === undefined) {
-    let retained = 0
-    let cut = seqs.length
-    for (let i = seqs.length - 1; i >= 0; i -= 1) {
-      retained += estimateSeqTokens(session, seqs[i])
-      cut = i
-      if (retained >= config.retainTokens) break
-    }
-    end = seqs[Math.max(0, cut - 1)]
-  }
-  if (start === undefined || end === undefined || start >= end) return
+  if (plan.start === undefined || plan.end === undefined) return
   state.lastWatermarkTurn = state.turn
+  const { start, end } = plan
   try {
     const result = await compaction.compactRegion(start, end, agent, signal)
     const retainLabel = config.retainTurns > 0 ? `${config.retainTurns} 轮` : `${config.retainTokens} tokens`
+    const shadowedStart = Number(result?.shadowedRange?.start ?? start)
+    const shadowedEnd = Number(result?.shadowedRange?.end ?? end)
+    const shadowedTokens = Number(result?.shadowedTokenCount ?? 0)
     store.logEvent('watermark', {
       sessionId: session.id,
-      tokens: Number(result?.shadowedTokenCount ?? 0),
-      detail: `seq ${result?.shadowedRange?.start ?? start}-${result?.shadowedRange?.end ?? end}（保留 ${retainLabel}；仅折叠最旧前缀）`,
+      tokens: shadowedTokens,
+      detail: `seq ${shadowedStart}-${shadowedEnd}（保留 ${retainLabel}；预计占用 ${(plan.projectedRatio * 100).toFixed(0)}%；仅折叠最旧前缀）`,
+    })
+    store.recordWatermarkFold({
+      sessionId: session.id ?? '',
+      start: shadowedStart,
+      end: shadowedEnd,
+      tokens: shadowedTokens,
+      summarySeq: Number(result?.summarySeq ?? 0),
+      at: Date.now(),
     })
     ctx.logger?.info?.(`context-hub: watermark compacted ${result?.shadowedSeqs?.length ?? 0} nodes at ${Math.round(ratio * 100)}%`)
   } catch (error) {
@@ -3771,6 +3957,9 @@ function statusText(ctx, store, session) {
   lines.push(
     `记忆：active ${byStatus.active}（session ${byScope.session} / project ${byScope.project} / global ${byScope.global}${kinds ? `；${kinds}` : ''}），superseded ${byStatus.superseded}，archived ${byStatus.archived}，pending ${byStatus.pending}${byStatus.pending > 0 ? '（/context-hub review 审核）' : ''}；消息索引 ${store.messageCount()} 条（${store.messagesFtsReady === true ? 'FTS5' : '词法'}） @ ${store.file}`,
   )
+  if (config.embedding.enabled !== true) {
+    lines.push('提示：语义检索未启用；本机有 11434 向量服务时可运行 `/context-hub doctor apply` 一键开启（否则仅词法检索）。')
+  }
   lines.push(
     `配置：模式 ${modeOf(store)}；召回 ${config.recallMaxItems} 条/${config.recallMaxChars} 字符，冷却 ${config.recallCooldownTurns} 轮；TTL session ${config.sessionTtlDays} 天 / project ${config.projectTtlDays} 天；抽取 ${config.extractPassesPerTurn} 次/轮；冲突 ${config.conflictPolicy}；项目 ${config.projectIdentity === 'cwd' ? 'cwd' : 'git'}；硬顶 ${config.recallMaxTokens} tokens${config.recallTimeoutMs > 0 ? `/超时 ${config.recallTimeoutMs}ms` : ''}；检索 ${store.ftsReady === true ? '关键词+FTS5' : '仅关键词'}${config.embedding.enabled ? (store.embedError ? `+向量（异常：${store.embedError}）` : `+向量（${config.embedding.fusion}）`) : ''}；压缩器 ${store.compactorActive === true ? 'hub' : 'native'}${store.compactorState && store.compactorActive !== true ? `（${store.compactorState}）` : ''}；改写 ${config.rewrite.enabled === true ? '开' : '关'}；重排 ${config.rerank.enabled === true ? `开（候选 ${config.rerank.candidates}）` : '关'}；水位 ${config.watermark.enabled === true ? `开（${Math.round(config.watermark.triggerRatio * 100)}% 触发，保留 ${config.watermark.retainTurns > 0 ? `${config.watermark.retainTurns} 轮` : `${config.watermark.retainTokens} tokens`}）` : '关（原生阈值）'}`,
   )
@@ -3788,6 +3977,10 @@ function statusText(ctx, store, session) {
       } catch { /* 旧格式跳过 */ }
     }
     lines.push(`请求：最近 ${requests.length} 次主请求采样，平均约 ${parsed > 0 ? Math.round(sum / parsed) : 0} tokens（其中注入约 ${parsed > 0 ? Math.round(injectedSum / parsed) : 0}）`)
+    const cache = store.prefixCacheStats(20)
+    if (cache.samples > 0) {
+      lines.push(`前缀缓存：最近 ${cache.samples} 次请求 input ${cache.input} tokens，cache read ${cache.cacheRead} tokens（命中 ${(cache.ratio * 100).toFixed(0)}%；由宿主 usage 提供）`)
+    }
   }
   const activity = store.eventCounts()
   if (activity.length > 0) {
@@ -3825,6 +4018,9 @@ function statusSnapshot(ctx, store, session, sessionId) {
       watermark: config.watermark.enabled === true,
       watermarkRetainTurns: config.watermark.retainTurns,
       watermarkRetainTokens: config.watermark.retainTokens,
+      watermarkMaxRegionTokens: config.watermark.maxRegionTokens,
+      watermarkTargetRatio: config.watermark.targetRatio,
+      embeddingBaseUrl: config.embedding.baseUrl,
       fusion: config.embedding.fusion,
       rerank: config.rerank.enabled === true,
       locale: config.locale,
@@ -3881,6 +4077,8 @@ function statusSnapshot(ctx, store, session, sessionId) {
     })),
   }
   snapshot.activity = store.eventCounts().map(row => ({ kind: row.kind, count: Number(row.n) }))
+  snapshot.prefixCache = store.prefixCacheStats(20)
+  snapshot.preset = config.preset
   snapshot.requests = store.recentEvents(200)
     .filter((event) => event.kind === 'request')
     .slice(0, 20)
@@ -4061,6 +4259,17 @@ function installStatusRoute(ctx, store) {
               if (applied === undefined) return json(400, { ok: false, error: 'value 必须是 observe/assist/takeover/full' })
               return json(200, { ok: true, action, value: applied, compactor: store.compactorActive === true, watermark: store.config.watermark.enabled === true })
             }
+            if (action === 'preset') {
+              const applied = await applyRecommended(ctx, store)
+              return json(200, { ok: true, action, changes: applied.changes, notes: applied.notes })
+            }
+            if (action === 'watermark-undo') {
+              const wanted = typeof body?.sessionId === 'string' ? body.sessionId : ''
+              const agent = wanted === '' ? undefined : ctx.get('agents')?.get?.(wanted)
+              const undone = undoWatermark(ctx, store, agent?.session, agent === undefined ? undefined : message => agent.inject?.(message))
+              if (!undone.ok) return json(400, { ok: false, action, error: undone.error })
+              return json(200, { ok: true, action, range: undone.range, chars: undone.chars })
+            }
             if (action === 'locale') {
               const locale = String(value || '')
               const validLocales = ['auto', 'zh', 'en', 'ja', 'ko', 'de', 'fr', 'es']
@@ -4122,6 +4331,58 @@ function probeText(store, session, limit) {
 }
 
 /** B1：能力自检与推荐档；只读，不改配置。 */
+/**
+ * P0：推荐档落地（`/context-hub doctor apply` 与面板「开启语义检索」共用）。
+ *
+ * 只做「能验证就开、不能验证就说清」的最小动作：
+ *  1) embedding 未配置 baseUrl 时，先探测本机 127.0.0.1:11434；可用则写入 baseUrl/model；
+ *  2) 启用 embedding，并按模型补 query/passage 前缀（e5 系列），必要时清旧向量后台重算；
+ *  3) 其余增强（改写/重排/水位）保持关闭——它们有额外模型调用或压缩风险，须用户显式决定。
+ *
+ * @returns {Promise<{ok: boolean, changes: string[], notes: string[]}>}
+ */
+async function applyRecommended(ctx, store) {
+  const changes = []
+  const notes = []
+  const config = store.config
+  const set = (key, value) => {
+    const result = setConfigValue(ctx, store, key, value)
+    if (result.ok) changes.push(`${key} = ${String(result.value)}`)
+    return result.ok
+  }
+  if (store.db === undefined) return { ok: false, changes, notes: ['记忆库不可用，无法持久化配置'] }
+  if (config.embedding.baseUrl === '') {
+    const local = 'http://127.0.0.1:11434/v1'
+    const available = await pingEmbedService(local, 900)
+    if (available) {
+      set('embedding.baseUrl', local)
+      if (config.embedding.model === '') set('embedding.model', 'multilingual-e5-small')
+    } else {
+      notes.push('未发现本地向量服务（127.0.0.1:11434）：先 `cd embed && npm install --ignore-scripts && ./start.sh`，或手动设置 embedding.baseUrl/model')
+    }
+  }
+  if (config.embedding.baseUrl !== '' && config.embedding.model !== '') {
+    const model = config.embedding.model
+    const needsPrefix = /(^|[^a-z])e5([^a-z]|$)/i.test(model)
+    if (needsPrefix && config.embedding.queryPrefix === '') set('embedding.queryPrefix', 'query: ')
+    if (needsPrefix && config.embedding.docPrefix === '') set('embedding.docPrefix', 'passage: ')
+    if (config.embedding.enabled !== true) {
+      set('embedding.enabled', true)
+      const cleared = store.resetEmbeddings()
+      if (cleared > 0) changes.push(`清空 ${cleared} 条旧向量（前缀/模型变化后必须重算）`)
+      void ensureEmbeddingService(ctx, store)
+        .then(() => store.backfillEmbeddings().catch(() => {}))
+        .catch(() => {})
+    }
+  } else if (config.embedding.enabled !== true) {
+    notes.push('保持词法检索（关键词 + FTS5）；语义检索未启用')
+  }
+  const tier = !config.embedding.enabled ? 'minimal' : (config.rewrite.enabled === true && config.rerank.enabled === true ? 'semantic' : 'balanced')
+  notes.push(`当前档位：${tier}；改写/重排/水位仍为显式开关（${config.rewrite.enabled ? '开' : '关'} / ${config.rerank.enabled ? '开' : '关'} / ${config.watermark.enabled ? '开' : '关'}）`)
+  store.logEvent('preset-apply', { detail: changes.length > 0 ? changes.join('; ') : notes.join('; ') })
+  return { ok: changes.length > 0, changes, notes }
+}
+
 function doctorReport(store) {
   const config = store.config
   const fts = store.ftsReady === true
@@ -4170,6 +4431,7 @@ function doctorReport(store) {
   }
   lines.push('```')
   lines.push('提示：先跑 `/context-hub probe` 与 `scripts/recall-bench.mjs` 看基线，再决定是否开改写/重排；不要同时开 watermark 与 billion-context 的压缩层。')
+  lines.push('一键落地：`/context-hub doctor apply`（探测 127.0.0.1:11434 → 启用向量；e5 自动补 query/passage 前缀并重算向量）。')
   return lines.join('\n')
 }
 
@@ -4526,6 +4788,15 @@ function defineCommand(ctx, store) {
         return { kind: 'success', text: statusText(ctx, store, session) }
       }
       if (sub === 'doctor') {
+        if (argument === 'apply') {
+          const applied = await applyRecommended(ctx, store)
+          const lines = [
+            applied.ok ? '已按推荐档应用：' : '推荐档未产生改动：',
+            ...applied.changes.map(item => `- ${item}`),
+            ...applied.notes.map(item => `· ${item}`),
+          ]
+          return { kind: applied.ok ? 'success' : 'success', text: lines.join('\n') }
+        }
         return { kind: 'success', text: doctorReport(store) }
       }
       if (sub === 'mode') {
@@ -4563,6 +4834,14 @@ function defineCommand(ctx, store) {
         }
       }
       if (sub === 'watermark') {
+        if (argument === 'undo') {
+          const undone = undoWatermark(ctx, store, session, session === undefined ? undefined : message => invocation.agent?.inject?.(message))
+          if (!undone.ok) return { kind: 'error', text: undone.error }
+          return {
+            kind: 'success',
+            text: `已撤销最近一次水位折叠：还原 seq ${undone.range.from}-${undone.range.to - 1} 的 ${undone.chars} 字符原文并注入下一步（折叠记录保留，可用 history 复查）。`,
+          }
+        }
         if (argument === 'on' || argument === 'off') {
           const on = argument === 'on'
           setWatermark(ctx, store, on)

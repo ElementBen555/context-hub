@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:f
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { execFileSync } from 'node:child_process'
-import { apply, defaults, MemoryStore, resolveConfig } from './src/index.js'
+import { apply, defaults, MemoryStore, planWatermarkRegion, resolveConfig } from './src/index.js'
 import { DatabaseSync } from 'node:sqlite'
 
 const dbPath = fileURLToPath(new URL('./tmp-smoke.db', import.meta.url))
@@ -1222,4 +1222,94 @@ process.env.DSH_CONTEXT_HUB_DB = dbPath
   backStore.close()
   rmSync(backDb, { force: true })
 }
+
+// P0/P1：推荐档落地、前缀缓存统计、水位选区规划与撤销
+{
+  const pDb = fileURLToPath(new URL('./tmp-smoke-p01.db', import.meta.url))
+  rmSync(pDb, { force: true })
+  process.env.DSH_CONTEXT_HUB_DB = pDb
+  const pTools = new Map()
+  const pCommands = new Map()
+  const pCtx = {
+    logger: { info() {}, warn() {} },
+    get(name) {
+      if (name === 'agents') return { get: () => ({ session, options: { provider: 'fake', model: 'fake-model' } }) }
+      if (name === 'tokenMeter') return { measure: () => ({ surfaceTokens: 1, totalTokens: 1, nodes: [] }), contextPressure: () => ({ pressureTokens: 1, contextWindow: 100 }) }
+      return undefined
+    },
+    tools: { register(definition) { pTools.set(definition.name, definition) } },
+    commands: { register(definition) { pCommands.set(definition.name, definition) } },
+    on() {},
+    inject(_dependencies, callback) { callback(pCtx) },
+    effect() {},
+  }
+  apply(pCtx, {})
+  const pCmd = pCommands.get('context-hub')
+  const pInvocation = rawInput => ({ agent: { ...agent, session }, signal: new AbortController().signal, commandId: 'cmd-p01', rawInput })
+
+  // 1) 推荐档：显式配置 baseUrl/model 后 apply 应启用 embedding，并为 e5 补前缀
+  const setUrl = await pCmd.handler(pInvocation('config embedding.baseUrl http://127.0.0.1:11434/v1'))
+  if (!setUrl.text.includes('已设置')) throw new Error('set baseUrl failed: ' + setUrl.text)
+  const setModel = await pCmd.handler(pInvocation('config embedding.model multilingual-e5-small'))
+  if (!setModel.text.includes('已设置')) throw new Error('set model failed: ' + setModel.text)
+  const applied = await pCmd.handler(pInvocation('doctor apply'))
+  if (!applied.text.includes('embedding.enabled = true')) throw new Error('doctor apply did not enable embedding: ' + applied.text)
+  if (!applied.text.includes('query: ')) throw new Error('doctor apply did not set e5 query prefix: ' + applied.text)
+  if (!applied.text.includes('passage: ')) throw new Error('doctor apply did not set e5 passage prefix: ' + applied.text)
+  const kvUrl = pCtx && pDb ? new MemoryStore(pDb, resolveConfig({})).open() : null
+  const reopened = new MemoryStore(pDb, resolveConfig({}))
+  reopened.open()
+  if (reopened.getKv('config:embedding.enabled') !== 'true') throw new Error('embedding.enabled not persisted')
+  if (reopened.getKv('config:embedding.docPrefix') !== 'passage: ') throw new Error('docPrefix not persisted')
+  reopened.close()
+  console.log('preset  :', 'doctor apply -> embedding on + e5 prefixes')
+
+  // 2) 前缀缓存统计
+  const cacheDb = fileURLToPath(new URL('./tmp-smoke-p01-cache.db', import.meta.url))
+  rmSync(cacheDb, { force: true })
+  const cacheStore = new MemoryStore(cacheDb, resolveConfig({}))
+  cacheStore.open()
+  cacheStore.logEvent('request', { detail: JSON.stringify({ estTokens: 100, usage: { input: 1000, output: 10, cacheRead: 800, cacheWrite: 0 } }) })
+  cacheStore.logEvent('request', { detail: JSON.stringify({ estTokens: 90, usage: { input: 1000, output: 10, cacheRead: 600, cacheWrite: 0 } }) })
+  const cacheStats = cacheStore.prefixCacheStats(10)
+  if (cacheStats.samples !== 2 || Math.round(cacheStats.ratio * 100) !== 70) {
+    throw new Error('prefix cache stats wrong: ' + JSON.stringify(cacheStats))
+  }
+  console.log('pcache  :', `samples ${cacheStats.samples}，命中 ${Math.round(cacheStats.ratio * 100)}%`)
+
+  // 3) 水位选区规划：保留尾部 + 目标占用 + 授权上限
+  const seqs = [0, 1, 2, 3, 4, 5, 6, 7]
+  const fakeSession = { eventAt: () => ({ type: 'assistant/message', data: {} }) }
+  const baseConfig = { retainTurns: 0, retainTokens: 80, minRegionNodes: 2, maxRegionTokens: 0, targetRatio: 0.6 }
+  const estimate = () => 40
+  const plan = planWatermarkRegion({
+    seqs, session: fakeSession, config: baseConfig,
+    pressureTokens: 800, contextWindow: 1000, estimate,
+  })
+  if (plan.reason !== undefined) throw new Error('plan should fold: ' + JSON.stringify(plan))
+  if (plan.regionTokens < 200) throw new Error('plan should expand toward target ratio: ' + JSON.stringify(plan))
+  if (plan.projectedRatio > 0.6) throw new Error('projected ratio above target: ' + JSON.stringify(plan))
+  const tooBig = planWatermarkRegion({
+    seqs, session: fakeSession, config: { ...baseConfig, maxRegionTokens: 100 },
+    pressureTokens: 800, contextWindow: 1000, estimate,
+  })
+  if (tooBig.reason !== 'region-too-large') throw new Error('maxRegionTokens not enforced: ' + JSON.stringify(tooBig))
+  const tooFew = planWatermarkRegion({
+    seqs: [0, 1], session: fakeSession, config: baseConfig,
+    pressureTokens: 800, contextWindow: 1000, estimate: () => 1,
+  })
+  if (tooFew.reason !== 'too-few-nodes') throw new Error('minRegionNodes not enforced: ' + JSON.stringify(tooFew))
+  console.log('wmplan  :', `region ${plan.regionTokens} tokens，预计占用 ${(plan.projectedRatio * 100).toFixed(0)}%；超限/节点不足均拒绝`)
+
+  // 4) 水位撤销：没有记录时给出明确错误
+  const undo = await pCmd.handler(pInvocation('watermark undo'))
+  if (undo.kind !== 'error' || !undo.text.includes('没有记录')) throw new Error('watermark undo should fail cleanly: ' + JSON.stringify(undo))
+  console.log('wmundo  :', '无折叠记录时安全失败')
+
+  cacheStore.close()
+  rmSync(cacheDb, { force: true })
+  rmSync(pDb, { force: true })
+  process.env.DSH_CONTEXT_HUB_DB = dbPath
+}
+
 console.log('SMOKE OK')

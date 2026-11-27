@@ -255,5 +255,11 @@
  "watermarkOn": "켜기",
  "watermarkTitle": "수위 압축: {0}",
  "yes": "예",
- "autoDetectDesc": "시스템 언어 따르기"
+ "autoDetectDesc": "시스템 언어 따르기",
+ "presetCallout": "의미 검색이 꺼져 있습니다: 키워드 + FTS5만 사용",
+ "presetApply": "켜기",
+ "prefixCacheLabel": "프리픽스 캐시",
+ "prefixCacheValue": "cache read {0}%(최근 {1}건)",
+ "watermarkUndo": "마지막 접기 되돌리기",
+ "watermarkLimits": "1회 상한 {0} tokens · 목표 {1}%"
 }

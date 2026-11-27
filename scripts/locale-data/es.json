@@ -255,5 +255,11 @@
  "watermarkOn": "activado",
  "watermarkTitle": "Marca de agua: {0}",
  "yes": "Sí",
- "autoDetectDesc": "seguir el idioma del sistema"
+ "autoDetectDesc": "seguir el idioma del sistema",
+ "presetCallout": "Recuperación semántica desactivada: solo palabras clave + FTS5",
+ "presetApply": "Activar",
+ "prefixCacheLabel": "Caché de prefijo",
+ "prefixCacheValue": "cache read {0}% (últimas {1} muestras)",
+ "watermarkUndo": "Deshacer último plegado",
+ "watermarkLimits": "máx. {0} tokens por plegado · objetivo {1}%"
 }

@@ -162,6 +162,12 @@ window.__ModuleLoader__.load({
         refreshedNote: (u) => `${u} · 打开时每 10s 刷新`,
         pendingBadge: (n) => `${n} 条待审核`,
         enable: '开启', disable: '关闭',
+        presetCallout: '语义检索未启用：召回仅关键词 + FTS5',
+        presetApply: '一键开启',
+        prefixCacheLabel: '前缀缓存',
+        prefixCacheValue: (pct, n) => `cache read ${pct}%（最近 ${n} 次采样）`,
+        watermarkUndo: '撤销上次折叠',
+        watermarkLimits: (max, target) => `单次上限 ${max} tokens · 目标 ${target}%`,
       },
       en: {
         activity: {
@@ -223,6 +229,12 @@ window.__ModuleLoader__.load({
         refreshedNote: (u) => `${u} · refreshes every 10s while open`,
         pendingBadge: (n) => `${n} pending`,
         enable: 'turn on', disable: 'turn off',
+        presetCallout: 'Semantic recall is off: retrieval uses keywords + FTS5 only',
+        presetApply: 'Enable it',
+        prefixCacheLabel: 'Prefix cache',
+        prefixCacheValue: (pct, n) => `cache read ${pct}% (last ${n} samples)`,
+        watermarkUndo: 'Undo last fold',
+        watermarkLimits: (max, target) => `max ${max} tokens per fold · target ${target}%`,
       },
       ja: {},
     }
@@ -517,7 +529,13 @@ window.__ModuleLoader__.load({
         "watermarkOn": "オン",
         "watermarkTitle": "水位圧縮：{0}",
         "yes": "はい",
-        "autoDetectDesc": "システム言語に従う"
+        "autoDetectDesc": "システム言語に従う",
+        "presetCallout": "意味検索が無効です：検索はキーワード + FTS5 のみ",
+        "presetApply": "有効にする",
+        "prefixCacheLabel": "プレフィックスキャッシュ",
+        "prefixCacheValue": "cache read {0}%（直近 {1} 件）",
+        "watermarkUndo": "直前の折りたたみを戻す",
+        "watermarkLimits": "1 回の上限 {0} tokens · 目標 {1}%"
       },
       "ko": {
         "activeExtra": "{0}개 활성 · {1}개 대기",
@@ -776,7 +794,13 @@ window.__ModuleLoader__.load({
         "watermarkOn": "켜기",
         "watermarkTitle": "수위 압축: {0}",
         "yes": "예",
-        "autoDetectDesc": "시스템 언어 따르기"
+        "autoDetectDesc": "시스템 언어 따르기",
+        "presetCallout": "의미 검색이 꺼져 있습니다: 키워드 + FTS5만 사용",
+        "presetApply": "켜기",
+        "prefixCacheLabel": "프리픽스 캐시",
+        "prefixCacheValue": "cache read {0}%(최근 {1}건)",
+        "watermarkUndo": "마지막 접기 되돌리기",
+        "watermarkLimits": "1회 상한 {0} tokens · 목표 {1}%"
       },
       "de": {
         "activeExtra": "{0} aktiv · {1} ausstehend",
@@ -1035,7 +1059,13 @@ window.__ModuleLoader__.load({
         "watermarkOn": "ein",
         "watermarkTitle": "Wasserstand: {0}",
         "yes": "Ja",
-        "autoDetectDesc": "Systemsprache folgen"
+        "autoDetectDesc": "Systemsprache folgen",
+        "presetCallout": "Semantischer Abruf ist aus: nur Schlüsselwörter + FTS5",
+        "presetApply": "Aktivieren",
+        "prefixCacheLabel": "Präfix-Cache",
+        "prefixCacheValue": "cache read {0}% (letzte {1} Proben)",
+        "watermarkUndo": "Letzte Faltung rückgängig",
+        "watermarkLimits": "max. {0} Tokens pro Faltung · Ziel {1}%"
       },
       "fr": {
         "activeExtra": "{0} actives · {1} en attente",
@@ -1294,7 +1324,13 @@ window.__ModuleLoader__.load({
         "watermarkOn": "activé",
         "watermarkTitle": "Compression : {0}",
         "yes": "Oui",
-        "autoDetectDesc": "suivre la langue du système"
+        "autoDetectDesc": "suivre la langue du système",
+        "presetCallout": "Rappel sémantique désactivé : mots-clés + FTS5 uniquement",
+        "presetApply": "Activer",
+        "prefixCacheLabel": "Cache de préfixe",
+        "prefixCacheValue": "cache read {0} % (derniers {1} échantillons)",
+        "watermarkUndo": "Annuler le dernier repli",
+        "watermarkLimits": "max {0} jetons par repli · cible {1} %"
       },
       "es": {
         "activeExtra": "{0} activas · {1} pendientes",
@@ -1553,7 +1589,13 @@ window.__ModuleLoader__.load({
         "watermarkOn": "activado",
         "watermarkTitle": "Marca de agua: {0}",
         "yes": "Sí",
-        "autoDetectDesc": "seguir el idioma del sistema"
+        "autoDetectDesc": "seguir el idioma del sistema",
+        "presetCallout": "Recuperación semántica desactivada: solo palabras clave + FTS5",
+        "presetApply": "Activar",
+        "prefixCacheLabel": "Caché de prefijo",
+        "prefixCacheValue": "cache read {0}% (últimas {1} muestras)",
+        "watermarkUndo": "Deshacer último plegado",
+        "watermarkLimits": "máx. {0} tokens por plegado · objetivo {1}%"
       }
     }
     /* i18n:extra-more:end */
@@ -2215,6 +2257,21 @@ window.__ModuleLoader__.load({
               h('span', { className: 'chp-callout-text' }, tr('pendingCallout', pendingItems.length)),
               h('span', { className: 'chp-callout-go' }, tr('goReview'))))
           }
+          if (snapshot.config !== undefined && snapshot.config.embedding !== true) {
+            sections.push(h('button', {
+              key: 'preset-callout',
+              type: 'button',
+              className: 'chp-callout',
+              onClick: () => { if (onAction) onAction({ action: 'preset' }) },
+            },
+              h('span', { className: 'chp-callout-dot' }),
+              h('span', { className: 'chp-callout-text' }, tr('presetCallout')),
+              h('span', { className: 'chp-callout-go' }, tr('presetApply'))))
+          }
+          if (snapshot.prefixCache !== undefined && Number(snapshot.prefixCache.samples) > 0) {
+            sections.push(h('div', { key: 'prefix-cache', className: 'chp-note' },
+              `${tr('prefixCacheLabel')}：${tr('prefixCacheValue', Math.round(Number(snapshot.prefixCache.ratio) * 100), Number(snapshot.prefixCache.samples))}`))
+          }
           if (session !== null && session !== undefined) {
             sections.push(h(Section, { key: 'parts', title: tp('sectionContext'), extra: tp('sectionPartsExtra') },
               h(Composition, { parts: session.parts })))
@@ -2561,14 +2618,21 @@ window.__ModuleLoader__.load({
                 h('div', { style: { fontWeight: 600, fontSize: '12px' } },
                   tr('watermarkTitle', config.watermark === true ? tr('on') : tr('off'))),
                 h('div', { className: 'chp-sec-extra', style: { textTransform: 'none', letterSpacing: 0 } },
-                  tr('watermarkHint'))),
-              h('button', {
-                type: 'button',
-                className: `chp-switch${config.watermark === true ? ' chp-switch-on' : ''}`,
-                'aria-label': config.watermark === true ? tr('watermarkAriaOff') : tr('watermarkAriaOn'),
-                'aria-pressed': config.watermark === true,
-                onClick: () => { if (onToggleWatermark) onToggleWatermark() },
-              }, h('span', { className: 'chp-knob' }))),
+                  tr('watermarkHint')),
+                h('div', { className: 'chp-sec-extra', style: { textTransform: 'none', letterSpacing: 0 } },
+                  tr('watermarkLimits', fmt(config.watermarkMaxRegionTokens ?? 0), Math.round(Number(config.watermarkTargetRatio ?? 0.6) * 100)))),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                h('button', {
+                  type: 'button', className: 'chp-mini-btn',
+                  onClick: () => { if (onAction) onAction({ action: 'watermark-undo', sessionId: snapshot.session?.id ?? '' }) },
+                }, tr('watermarkUndo')),
+                h('button', {
+                  type: 'button',
+                  className: `chp-switch${config.watermark === true ? ' chp-switch-on' : ''}`,
+                  'aria-label': config.watermark === true ? tr('watermarkAriaOff') : tr('watermarkAriaOn'),
+                  'aria-pressed': config.watermark === true,
+                  onClick: () => { if (onToggleWatermark) onToggleWatermark() },
+                }, h('span', { className: 'chp-knob' })))),
             h('div', { key: 'compactor', className: 'chp-toggle' },
               h('div', null,
                 h('div', { style: { fontWeight: 600, fontSize: '12px' } },

@@ -255,5 +255,11 @@
  "watermarkOn": "オン",
  "watermarkTitle": "水位圧縮：{0}",
  "yes": "はい",
- "autoDetectDesc": "システム言語に従う"
+ "autoDetectDesc": "システム言語に従う",
+ "presetCallout": "意味検索が無効です：検索はキーワード + FTS5 のみ",
+ "presetApply": "有効にする",
+ "prefixCacheLabel": "プレフィックスキャッシュ",
+ "prefixCacheValue": "cache read {0}%（直近 {1} 件）",
+ "watermarkUndo": "直前の折りたたみを戻す",
+ "watermarkLimits": "1 回の上限 {0} tokens · 目標 {1}%"
 }

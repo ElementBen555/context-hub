@@ -113,3 +113,25 @@ autoStart 复跑注意：profile 里要同时写 `embedding.dtype: q8`，否则�
 - 数据集小、部分自建，不能替代第三方评测。
 - 词法/向量/改写/重排的消融必须同数据集、同预算；关闭任一路径要能复现。
 - `probe` 是“从已有记忆自造查询”，只能发现明显退化，不能证明泛化。
+
+## en-holdout（1.9.0）
+
+16 条英文事实 + 16 条改写查询（刻意避免与事实共享关键词），用于验证「纯拉丁查询向量优先」：
+
+```bash
+# 需要本地向量服务（embed/，multilingual-e5-small q8）
+DSH_CONTEXT_HUB_EMBED_URL=http://127.0.0.1:11434/v1 \
+DSH_CONTEXT_HUB_EMBED_MODEL=multilingual-e5-small \
+DSH_CONTEXT_HUB_QUERY_PREFIX='query: ' DSH_CONTEXT_HUB_DOC_PREFIX='passage: ' \
+node scripts/eval/recall.mjs --dataset scripts/eval/en-holdout.json
+```
+
+| 路径 | R@1 | R@3 | R@5 | R@10 | MRR |
+|------|-----|-----|-----|------|-----|
+| 词法（关键词 + FTS5） | 68.8% | 75.0% | 75.0% | 75.0% | 0.719 |
+| 向量（修复前加权融合） | 75.0% | 81.3% | 81.3% | 93.8% | 0.786 |
+| 向量（1.9.0 纯拉丁向量优先） | 75.0% | 87.5% | **93.8%** | **100%** | 0.822 |
+
+同一环境复跑中文 `zh-holdout`：向量 R@5 仍为 100%（无回归）。
+
+> 口径：R@k = 期望条目是否落在前 k；样本仅 16 条，不构成泛化结论。

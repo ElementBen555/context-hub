@@ -144,6 +144,10 @@
   "pillUnavailable",
   "policyEvidence",
   "policyRecency",
+  "prefixCacheLabel",
+  "prefixCacheValue",
+  "presetApply",
+  "presetCallout",
   "pressure",
   "queryRewrite",
   "recallBudget",
@@ -252,8 +256,10 @@
   "watermarkAriaOff",
   "watermarkAriaOn",
   "watermarkHint",
+  "watermarkLimits",
   "watermarkOff",
   "watermarkOn",
   "watermarkTitle",
+  "watermarkUndo",
   "yes"
 ]

@@ -255,5 +255,11 @@
  "watermarkOn": "activé",
  "watermarkTitle": "Compression : {0}",
  "yes": "Oui",
- "autoDetectDesc": "suivre la langue du système"
+ "autoDetectDesc": "suivre la langue du système",
+ "presetCallout": "Rappel sémantique désactivé : mots-clés + FTS5 uniquement",
+ "presetApply": "Activer",
+ "prefixCacheLabel": "Cache de préfixe",
+ "prefixCacheValue": "cache read {0} % (derniers {1} échantillons)",
+ "watermarkUndo": "Annuler le dernier repli",
+ "watermarkLimits": "max {0} jetons par repli · cible {1} %"
 }
