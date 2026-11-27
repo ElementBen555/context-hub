@@ -19,6 +19,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { ensureInitialized, getCurrentLocale, setLocale, t, detectSystemLocale, SUPPORTED_LOCALES, LOCALE_NAMES } from './i18n.js'
 
 export const name = 'dsh-context-hub'
 export const inject = ['tools', 'commands']
@@ -80,6 +81,8 @@ export const defaults = {
   mode: 'auto',
   /** A4: 分层复核策略：off / low-confidence / layered。 */
   reviewPolicy: 'low-confidence',
+  /** 国际化：默认跟随系统语言。 */
+  locale: 'auto',
 }
 
 
@@ -98,6 +101,7 @@ const CONFIG_EDITABLE = {
   'embedding.enabled': { kind: 'bool' },
   'rewrite.enabled': { kind: 'bool' },
   'rerank.enabled': { kind: 'bool' },
+  locale: { kind: 'enum', values: ['auto', ...SUPPORTED_LOCALES] },
 }
 
 function configPathGet(target, key) {
@@ -804,6 +808,11 @@ export class MemoryStore {
   }
 
   open() {
+    // 初始化国际化：检测系统语言或使用配置
+    const configDir = dirname(this.file)
+    const preferredLocale = this.config.locale === 'auto' ? null : this.config.locale
+    ensureInitialized(configDir, preferredLocale)
+    
     mkdirSync(dirname(this.file), { recursive: true })
     this.db = new DatabaseSync(this.file)
     try { this.db.exec('PRAGMA busy_timeout = 5000') } catch { /* 旧版 SQLite 忽略 */ }
@@ -3818,6 +3827,7 @@ function statusSnapshot(ctx, store, session, sessionId) {
       watermarkRetainTokens: config.watermark.retainTokens,
       fusion: config.embedding.fusion,
       rerank: config.rerank.enabled === true,
+      locale: config.locale,
     },
     session: null,
     memory: { active: 0, superseded: 0, archived: 0, deleted: 0, pending: 0, scopes: { session: 0, project: 0, global: 0 }, kinds: {}, recent: [] },
@@ -4050,6 +4060,18 @@ function installStatusRoute(ctx, store) {
               const applied = setCompactionMode(ctx, store, value)
               if (applied === undefined) return json(400, { ok: false, error: 'value 必须是 observe/assist/takeover/full' })
               return json(200, { ok: true, action, value: applied, compactor: store.compactorActive === true, watermark: store.config.watermark.enabled === true })
+            }
+            if (action === 'locale') {
+              const locale = String(value || '')
+              const validLocales = ['auto', 'zh', 'en', 'ja', 'ko', 'de', 'fr', 'es']
+              if (!validLocales.includes(locale)) {
+                return json(400, { ok: false, error: `不支持的语言：${locale}` })
+              }
+              store.setKv('config:locale', locale)
+              // 更新运行时配置
+              store.config.locale = locale
+              store.logEvent('locale-change', { detail: `locale=${locale}（panel）` })
+              return json(200, { ok: true, action, value: locale })
             }
             return json(400, { ok: false, error: '未知 action' })
           } catch (error) {
@@ -4492,8 +4514,8 @@ function defineTools(ctx, store) {
 function defineCommand(ctx, store) {
   ctx.commands.register({
     name: 'context-hub',
-    description: '上下文中枢：status / doctor / mode / search / remember / history / restore / decompress / unfold / explain / probe / log / audit / compact / compactor / reembed / watermark / config / review',
-    input: { hint: 'status | doctor | mode [observe|assist|takeover|full] | search <词> | remember <内容> | history <词> | restore <start> [end] | decompress [id|start] [end] | unfold [id:<n>|start] [end] [steps:<n>] | explain <词> | probe [n] | log [n] | audit <id> | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id]' },
+    description: '上下文中枢：status / doctor / mode / search / remember / history / restore / decompress / unfold / explain / probe / log / audit / compact / compactor / reembed / watermark / config / review / locale / export-jsonl / import-jsonl / graph / timeline / conflicts',
+    input: { hint: 'status | doctor | mode [observe|assist|takeover|full] | search <词> | remember <内容> | history <词> | restore <start> [end] | decompress [id|start] [end] | unfold [id:<n>|start] [end] [steps:<n>] | explain <词> | probe [n] | log [n] | audit <id> | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id] | locale [auto|zh|en|ja] | export-jsonl | import-jsonl <路径> | graph <编号> | timeline [scope] | conflicts <编号>' },
     async handler(invocation) {
       const raw = invocation.rawInput.trim()
       const [sub, ...rest] = raw.split(/\s+/)
@@ -4839,6 +4861,34 @@ function defineCommand(ctx, store) {
           return { kind: 'error', text: `导入失败：${error instanceof Error ? error.message : String(error)}` }
         }
       }
+      // 国际化：语言设置
+      if (sub === 'locale') {
+        const targetLocale = argument.split(/\s+/)[0]
+        if (!targetLocale || targetLocale === 'list') {
+          const current = getCurrentLocale()
+          const available = SUPPORTED_LOCALES.map(l => `- ${l}: ${LOCALE_NAMES[l] || l}`).join('\n')
+          return {
+            kind: 'success',
+            text: `当前语言：${current}\n\n可用语言：\n${available}\n\n用法：/context-hub locale <语言代码>（如 zh, en, ja）\n设置 auto 自动跟随系统语言`,
+          }
+        }
+        if (targetLocale === 'auto') {
+          setLocale('auto')
+          store.setKv('config:locale', 'auto')
+          const detected = detectSystemLocale()
+          return {
+            kind: 'success',
+            text: `已切换至自动检测语言，检测到：${detected}\n下次启动将跟随系统语言`,
+          }
+        }
+        const result = setLocale(targetLocale)
+        if (!result.success) return { kind: 'error', text: `不支持的语言：${targetLocale}` }
+        store.setKv('config:locale', targetLocale)
+        return {
+          kind: 'success',
+          text: `已切换语言：${targetLocale}（${LOCALE_NAMES[targetLocale] || targetLocale}）\n已持久化，立即生效`,
+        }
+      }
       if (sub === 'compact') {
         const compaction = ctx.get('compaction')
         if (compaction === undefined) return { kind: 'error', text: '压缩服务不可用。' }
@@ -4860,7 +4910,7 @@ function defineCommand(ctx, store) {
           return { kind: 'error', text: `压缩失败：${error instanceof Error ? error.message : String(error)}` }
         }
       }
-      return { kind: 'error', text: '用法：/context-hub status | doctor | mode [observe|assist|takeover|full] | search <关键词> | remember <内容> | history <关键词> | restore <起始 seq> [结束 seq] | decompress [id:<编号>|起始 seq] [结束 seq] | unfold [id:<编号>|起始 seq] [结束 seq] [steps:<n>] | explain <关键词> | log [条数] | audit <编号> | graph <编号> | timeline [scope] | conflicts <编号> | forget <编号> | supersede <编号> <新内容> | export | export-jsonl | import-jsonl <路径> | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id]' }
+      return { kind: 'error', text: '用法：/context-hub status | doctor | mode [observe|assist|takeover|full] | search <关键词> | remember <内容> | history <关键词> | restore <起始 seq> [结束 seq] | decompress [id:<编号>|起始 seq] [结束 seq] | unfold [id:<编号>|起始 seq] [结束 seq] [steps:<n>] | explain <关键词> | log [条数] | audit <编号> | graph <编号> | timeline [scope] | conflicts <编号> | forget <编号> | supersede <编号> <新内容> | export | export-jsonl | import-jsonl <路径> | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id] | locale [auto|zh|en|ja]' }
     },
   })
 }

@@ -1,3 +1,5 @@
+**中文** · [English](docs/i18n/en/README.md) · [日本語](docs/i18n/ja/README.md) · [한국어](docs/i18n/ko/README.md) · [Deutsch](docs/i18n/de/README.md) · [Français](docs/i18n/fr/README.md) · [Español](docs/i18n/es/README.md)
+
 # dsh-context-hub · 上下文中枢
 
 一个插件，把 **压缩、记忆、洞察** 三件事装进同一个 DSH bundle：只安装一次，宿主侧零构建（纯 ESM JavaScript），数据落在本地 SQLite。
@@ -69,6 +71,7 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 
 ## 已验证
 
+- **1.8.1**：面板 7 语言（zh/en/ja/ko/de/fr/es，257 词条/语言）支持即时切换与持久化；四份使用文档补齐 6 语言译文（`docs/i18n/`）；新增 `test:panel-i18n` / `check:locales` / `test:docs-i18n` 回归。
 - **1.8.0**：完成所有 P1/P2 补强任务（A1/A3/A4/B5/C4/C5/E4/A5/E3/E5/D4/D5），新增 5 个命令（export-jsonl/import-jsonl/graph/timeline/conflicts）、JSONL 导出/导入、记忆视图、兼容性文档。
 - **1.7.4**：面板压缩器 native ⇄ hub 可切换并持久化，失败返回 409；冒烟覆盖路由与快照。
 - **1.7.3**：召回分段耗时复盘（重排占 97%）；`rerank.reasoningEffort=low` 降 30%；新增 `docs/PERF.md`。
@@ -262,7 +265,7 @@ curl -s localhost:11434/health    # {"ok":true,...,"ready":true}
 - `package.json`：`files` 含 `src`、`client`、`cordis.patch.yml`、`locale`、`icon.svg`、`README.md`、`LICENSE`、`CHANGELOG.md`、`docs`、`scripts`、`test-smoke.mjs`、`embed/`（含 `node_modules`）；`exports` 增加 `./locale/*.json` 与 `./icon`；`publishConfig.access=public`。
 - 展示元数据：`locale/en.json` / `locale/zh.json` 提供 `meta.title` 与 `meta.description`（不声明 `meta.detail`，详情页回退 README）；`icon.svg` 为 610 B 原创 SVG（限 256 KiB）。
 - `LICENSE`（MIT）与 `CHANGELOG.md` 已就位。打包分两种：`npm pack`（slim，30 个文件、253,204 字节，不含 `embed/node_modules`）与 `scripts/pack.sh`（`git archive`，含 vendored 依赖，约 157MB）。临时用 `npm_config_cache=$PWD/.npm-cache` 绕过只读的 `~/.npm`。
-- 发布状态（2026-11-27）：**已发布 npm 1.8.0**（public，slim 包约 280 kB；含 12 个 P1/P2 新功能）；本机 profile 仍以 `link:` 方式开发。
+- 发布状态（2026-11-27）：**已发布 npm 1.8.0 / 1.8.1**（public，slim 包约 290 kB；1.8.1 含 7 语言面板与 6 语言文档）；本机 profile 仍以 `link:` 方式开发。
 - 分发包：`dist/` 下的最新 `dsh-context-hub-*.tgz`（版本、文件数、字节数与 SHA-256 以发布时生成的 `dist/INSTALL.md` 为准，避免包内文档自引用过期）；DSH 安装解析器把绝对路径 `.tgz` 识别为 tarball。
 - 打包产物自检：`npm pack` 的 1.0.0 tarball 含 `src/`、`client/`、`cordis.patch.yml`、`locale/`、`icon.svg`、`docs/`；`createRequire` 能解析 `dsh-context-hub`、`./locale/en.json`、`./locale/zh.json`、`./icon`、`./client`，且 `import { apply, inject }` 得到 `tools,commands`（0.7.0 已验证，1.0.0 结构相同）。
 - 发布命令：`npm_config_cache=$PWD/.npm-cache npm publish --access public`（需带 bypass 2FA 的 granular token）；发布后用 `plugin_manager install_bundle(target="dsh-context-hub@<版本>")` 验证第三方安装路径。
@@ -330,5 +333,5 @@ curl -s localhost:11434/health    # {"ok":true,...,"ready":true}
 - 语义召回：中文 zh-holdout R@5 100% 已达标，但英文 LongMemEval 子集 R@5 仅 83.3%（与词法持平）仍是弱项；下一步侧重英文/跨语言检索策略。
 - 水位接管默认关闭：开启前建议先在空闲会话试 `retainTokens`；大区间一次折叠的授权策略（按 token 上限/确认）未做。
 - 面板可写遗忘/替换/审核/水位/压缩器/模式，其余只读；改写/重排/水位阈值仍走 profile 或命令。
-- 面板接 locale 服务（现在中英文案硬编码在组件里）。
-- npm 发布与市场收录：等有 npm 账号后 `npm publish`（npm 上仍未发布），再用 `install_bundle(target="dsh-context-hub@1.6.4")` 验证；自依赖已清，发布前只需重打包。
+- 面板语言已覆盖 zh/en/ja/ko/de/fr/es（7 种，词表见 `scripts/locale-data/`，说明见 [docs/PANEL-I18N.md](docs/PANEL-I18N.md)）；跟随 DSH 自身 locale 服务自动切换尚未接入。
+- npm 发布与市场收录：1.8.0 已发布到 npm（public）；DSH 市场收录待做，可用 `install_bundle(target="dsh-context-hub@1.8.0")` 验证第三方安装路径。

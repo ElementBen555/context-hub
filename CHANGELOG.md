@@ -1,3 +1,23 @@
+## 1.8.1
+
+### 新增
+
+- **面板多语言（7 种）**：zh / en / ja / ko / de / fr / es，共 257 个词条，覆盖标题栏、五个标签页、表格表头、图例、按钮、空态与提示；`auto` 跟随浏览器语言。
+- **语言即时切换**：面板「语言」标签切换后立即重绘，无需刷新或重启；偏好写入 `localStorage`（`context-hub.locale`）并尽力同步到记忆库。
+- **文档多语言**：README / UPGRADE-GUIDE / COMPATIBILITY / PANEL-I18N 四份使用文档各 6 种译文，放在 `docs/i18n/`，中文为权威源。
+- 新增 `npm run test:panel-i18n`、`npm run check:locales`、`npm run test:docs-i18n` 三个回归入口。
+
+### 修复
+
+- 面板语言切换无效：`snapshot.config` 缺少 `locale` 字段，且面板文案只读服务端值；改为客户端状态驱动 + 服务端兜底。
+- 面板整块消失：语言页 `sections.push(...)` 少一个右括号导致 `client.js` 语法错误、插件未注册；已修复并加语法/渲染检查。
+- 词典回退顺序：目标语言 → 英文 → 中文，避免未知键直接回落中文。
+
+### 文档
+
+- `docs/PANEL-I18N.md` 更新覆盖范围、词表工作流与新增语言步骤。
+- `README.md` 更新面板语言与 npm 发布状态。
+
 # 变更记录
 
 ## [1.8.0] - 2026-11-27

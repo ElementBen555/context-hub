@@ -18,3 +18,5 @@ tmp-smoke*
 .npm-cache/
 tmp-*
 *.db-*
+
+.npmrc

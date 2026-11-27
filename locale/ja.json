@@ -1,0 +1,322 @@
+{
+  "meta": {
+    "title": "コンテキストハブ",
+    "description": "圧縮、メモリ、コンテキストインサイトを 1 つのプラグインに統合：SQLite ベースの検索、自動抽出、オプションの 8 セクションコンパクタ、ステータスおよびガバナンスパネル。"
+  },
+  "commands": {
+    "help": {
+      "description": "コンテキストハブコマンドを表示",
+      "usage": "/context-hub <command> [args]",
+      "examples": "例"
+    },
+    "status": {
+      "description": "コンテキストの圧迫、折りたたみ領域、メモリ構成を表示",
+      "title": "📊 コンテキストハブステータス",
+      "sections": {
+        "contextPressure": "コンテキスト圧迫",
+        "memoryStats": "メモリ統計",
+        "compactionStats": "コンパクション統計",
+        "recallStats": "検索統計"
+      }
+    },
+    "doctor": {
+      "description": "FTS5、ベクトル、書き換え、再ランク、コンパクタ、ウォーターマークをチェック",
+      "title": "🩺 機能チェック",
+      "sections": {
+        "fts5": "FTS5 フルテキスト検索",
+        "vector": "ベクトル検索",
+        "rewrite": "クエリ書き換え",
+        "rerank": "再ランク付け",
+        "compactor": "コンパクタ",
+        "watermark": "ウォーターマーク"
+      }
+    },
+    "probe": {
+      "description": "検索プローブ：メモリ検索の品質をチェック",
+      "title": "🧪 検索プローブ",
+      "hitRate": "ヒット率",
+      "sampleSize": "サンプルサイズ",
+      "confidenceInterval": "信頼区間"
+    },
+    "explain": {
+      "description": "検索デバッグ：キーワードスコアの詳細を表示",
+      "title": "🔍 検索デバッグ",
+      "query": "クエリ",
+      "budget": "検索予算",
+      "candidates": "候補メモリ",
+      "notSelected": "選択されなかった理由"
+    },
+    "history": {
+      "description": "履歴メッセージを検索（折りたたみ領域を含む）",
+      "title": "📜 履歴メッセージ",
+      "query": "検索キーワード",
+      "limit": "最大結果数",
+      "noResults": "一致するメッセージが見つかりません"
+    },
+    "log": {
+      "description": "観測イベントのタイムラインを表示",
+      "title": "📅 イベントタイムライン",
+      "events": "イベント",
+      "recall": "検索",
+      "extract": "抽出",
+      "compact": "圧縮"
+    },
+    "remember": {
+      "description": "長期メモリに書き込む",
+      "title": "💾 メモリ保存済み",
+      "kind": "種類",
+      "scope": "範囲",
+      "tags": "タグ"
+    },
+    "search": {
+      "description": "長期メモリを検索",
+      "title": "🔎 メモリ検索",
+      "query": "クエリ",
+      "results": "検索結果",
+      "noResults": "関連するメモリが見つかりません"
+    },
+    "compact": {
+      "description": "手動で圧縮をトリガー",
+      "title": "📦 圧縮完了",
+      "compressed": "圧縮領域",
+      "tokens": "保存されたトークン",
+      "chars": "文字数"
+    },
+    "unfold": {
+      "description": "圧縮された要約を展開",
+      "title": "📤 展開済み",
+      "steps": "展開ステップ数",
+      "chars": "文字数"
+    },
+    "exportJsonl": {
+      "description": "メモリを JSONL 形式でエクスポート",
+      "title": "📤 エクスポート完了",
+      "output": "出力ファイル",
+      "count": "エクスポート数",
+      "scope": "範囲"
+    },
+    "importJsonl": {
+      "description": "JSONL メモリファイルをインポート",
+      "title": "📥 インポート完了",
+      "input": "入力ファイル",
+      "imported": "インポート数",
+      "duplicates": "重複スキップ",
+      "errors": "エラー数"
+    },
+    "graph": {
+      "description": "メモリ関係グラフを表示",
+      "title": "🕸️ メモリグラフ",
+      "memory": "メモリ",
+      "relations": "関係",
+      "maxDepth": "最大深度",
+      "maxNodes": "最大ノード数"
+    },
+    "timeline": {
+      "description": "メモリタイムラインを表示",
+      "title": "📅 メモリタイムライン",
+      "scope": "範囲",
+      "date": "日付",
+      "memory": "メモリ"
+    },
+    "conflicts": {
+      "description": "競合チェーンを表示",
+      "title": "⚠️ 競合チェーン",
+      "memory": "メモリ",
+      "supersededBy": "置き換えられた",
+      "supersedes": "置き換え",
+      "chainLength": "チェーン長"
+    },
+    "config": {
+      "description": "設定を表示または変更",
+      "title": "⚙️ 設定",
+      "key": "キー",
+      "value": "値",
+      "updated": "更新済み",
+      "invalid": "無効な設定"
+    },
+    "stats": {
+      "description": "メモリ統計を表示",
+      "title": "📊 統計",
+      "total": "合計",
+      "byKind": "種類別",
+      "byScope": "範囲別",
+      "byStatus": "ステータス別"
+    },
+    "clean": {
+      "description": "期限切れメモリをクリーンアップ",
+      "title": "🧹 クリーンアップ完了",
+      "archived": "アーカイブ数",
+      "deleted": "削除数"
+    },
+    "locale": {
+      "description": "言語を設定または表示",
+      "title": "🌐 言語設定",
+      "current": "現在の言語",
+      "available": "利用可能な言語",
+      "switched": "切り替え済み",
+      "unsupported": "サポートされていない言語"
+    }
+  },
+  "panel": {
+    "title": "コンテキストハブパネル",
+    "tabs": {
+      "status": "ステータス",
+      "memory": "メモリ",
+      "recall": "検索",
+      "compaction": "圧縮",
+      "settings": "設定"
+    },
+    "sections": {
+      "contextPressure": {
+        "title": "コンテキスト圧迫",
+        "tokens": "トークン使用量",
+        "turns": "会話ターン",
+        "compression": "圧縮率"
+      },
+      "memoryOverview": {
+        "title": "メモリ概要",
+        "total": "合計",
+        "session": "セッション",
+        "project": "プロジェクト",
+        "global": "グローバル"
+      },
+      "recallMetrics": {
+        "title": "検索指標",
+        "hitRate": "ヒット率",
+        "avgLatency": "平均遅延",
+        "timeoutRate": "タイムアウト率"
+      },
+      "compactionMetrics": {
+        "title": "圧縮指標",
+        "totalCompressions": "圧縮総数",
+        "avgCompression": "平均圧縮",
+        "lastCompact": "最終圧縮"
+      }
+    },
+    "actions": {
+      "refresh": "更新",
+      "export": "エクスポート",
+      "settings": "設定",
+      "help": "ヘルプ"
+    }
+  },
+  "errors": {
+    "database": "データベースエラー：{error}",
+    "query": "クエリエラー：{error}",
+    "timeout": "操作タイムアウト",
+    "notFound": "見つかりません：{item}",
+    "invalidConfig": "無効な設定：{key}",
+    "permission": "権限が不十分",
+    "memory": "メモリ不足",
+    "network": "ネットワークエラー",
+    "unknown": "不明なエラー"
+  },
+  "validation": {
+    "required": "必須フィールド",
+    "invalidFormat": "無効な形式",
+    "outOfRange": "範囲外",
+    "tooShort": "短すぎます",
+    "tooLong": "長すぎます",
+    "duplicate": "既に存在します"
+  },
+  "common": {
+    "yes": "はい",
+    "no": "いいえ",
+    "ok": "OK",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "delete": "削除",
+    "edit": "編集",
+    "view": "表示",
+    "search": "検索",
+    "filter": "フィルタ",
+    "sort": "ソート",
+    "loading": "読み込み中...",
+    "error": "エラー",
+    "success": "成功",
+    "warning": "警告",
+    "info": "情報",
+    "unknown": "不明",
+    "n/a": "N/A",
+    "all": "すべて",
+    "none": "なし",
+    "more": "もっと",
+    "less": "更少",
+    "reset": "リセット",
+    "apply": "適用",
+    "close": "閉じる",
+    "back": "戻る",
+    "next": "次へ",
+    "previous": "前へ",
+    "finish": "完了"
+  },
+  "memory": {
+    "kind": {
+      "decision": "決定",
+      "fact": "事実",
+      "preference": "優先",
+      "task": "タスク",
+      "skill": "スキル",
+      "summary": "要約"
+    },
+    "scope": {
+      "session": "セッション",
+      "project": "プロジェクト",
+      "global": "グローバル"
+    },
+    "status": {
+      "active": "アクティブ",
+      "superseded": "置き換え済み",
+      "archived": "アーカイブ済み",
+      "deleted": "削除済み",
+      "pending": "保留中"
+    }
+  },
+  "settings": {
+    "title": "設定",
+    "general": {
+      "title": "一般",
+      "language": "言語",
+      "theme": "テーマ",
+      "autoSave": "自動保存"
+    },
+    "memory": {
+      "title": "メモリ",
+      "ttl": "TTL",
+      "capacity": "容量",
+      "conflictPolicy": "競合ポリシー"
+    },
+    "recall": {
+      "title": "検索",
+      "maxItems": "最大アイテム数",
+      "maxTokens": "最大トークン数",
+      "timeout": "タイムアウト",
+      "cooldown": "クールダウン"
+    },
+    "compaction": {
+      "title": "圧縮",
+      "compactor": "コンパクタ",
+      "watermark": "ウォーターマーク",
+      "mode": "モード"
+    },
+    "advanced": {
+      "title": "詳細",
+      "embedding": "ベクトル検索",
+      "rewrite": "クエリ書き換え",
+      "rerank": "再ランク付け"
+    }
+  },
+  "help": {
+    "title": "ヘルプ",
+    "overview": "コンテキストハブは、圧縮、メモリ、インサイトを組み合わせた DSH プラグインです。",
+    "features": [
+      "メモリ：長期メモリを自動抽出、キーワードで検索",
+      "圧縮：8 セクションプロンプト圧縮、メモリ対応",
+      "インサイト：ステータスパネル、イベントタイムライン、検索診断"
+    ],
+    "commands": "利用可能なコマンド",
+    "docs": "ドキュメント",
+    "issues": "問題フィードバック",
+    "version": "バージョン"
+  }
+}

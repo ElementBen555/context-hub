@@ -1,6 +1,322 @@
 {
   "meta": {
-    "title": "Context hub",
+    "title": "Context Hub",
     "description": "Compression, memory, and context insight in one plugin: SQLite-backed recall, auto-extraction, an optional 8-section compactor, and a status and governance panel."
+  },
+  "commands": {
+    "help": {
+      "description": "Show context hub commands",
+      "usage": "/context-hub <command> [args]",
+      "examples": "Examples"
+    },
+    "status": {
+      "description": "Show context pressure, folded regions, memory composition",
+      "title": "📊 Context Hub Status",
+      "sections": {
+        "contextPressure": "Context Pressure",
+        "memoryStats": "Memory Statistics",
+        "compactionStats": "Compaction Statistics",
+        "recallStats": "Recall Statistics"
+      }
+    },
+    "doctor": {
+      "description": "Check FTS5, vector, rewrite, rerank, compactor and watermark",
+      "title": "🩺 Capability Check",
+      "sections": {
+        "fts5": "FTS5 Full-text Search",
+        "vector": "Vector Recall",
+        "rewrite": "Query Rewrite",
+        "rerank": "Rerank",
+        "compactor": "Compactor",
+        "watermark": "Watermark"
+      }
+    },
+    "probe": {
+      "description": "Search probe: check memory recall quality",
+      "title": "🧪 Search Probe",
+      "hitRate": "Hit Rate",
+      "sampleSize": "Sample Size",
+      "confidenceInterval": "Confidence Interval"
+    },
+    "explain": {
+      "description": "Recall debug: show keyword scoring details",
+      "title": "🔍 Recall Debug",
+      "query": "Query",
+      "budget": "Recall Budget",
+      "candidates": "Candidate Memories",
+      "notSelected": "Not Selected Reason"
+    },
+    "history": {
+      "description": "Search history messages (including folded regions)",
+      "title": "📜 History Messages",
+      "query": "Query Keywords",
+      "limit": "Max Results",
+      "noResults": "No matching messages found"
+    },
+    "log": {
+      "description": "View observation event timeline",
+      "title": "📅 Event Timeline",
+      "events": "Events",
+      "recall": "Recall",
+      "extract": "Extract",
+      "compact": "Compact"
+    },
+    "remember": {
+      "description": "Write to long-term memory",
+      "title": "💾 Memory Saved",
+      "kind": "Kind",
+      "scope": "Scope",
+      "tags": "Tags"
+    },
+    "search": {
+      "description": "Search long-term memory",
+      "title": "🔎 Memory Search",
+      "query": "Query",
+      "results": "Search Results",
+      "noResults": "No relevant memories found"
+    },
+    "compact": {
+      "description": "Manually trigger compaction",
+      "title": "📦 Compaction Complete",
+      "compressed": "Compressed Region",
+      "tokens": "Tokens Saved",
+      "chars": "Characters"
+    },
+    "unfold": {
+      "description": "Expand compressed summary",
+      "title": "📤 Expanded",
+      "steps": "Steps Expanded",
+      "chars": "Characters"
+    },
+    "exportJsonl": {
+      "description": "Export memories as JSONL format",
+      "title": "📤 Export Complete",
+      "output": "Output File",
+      "count": "Exported Count",
+      "scope": "Scope"
+    },
+    "importJsonl": {
+      "description": "Import JSONL memory file",
+      "title": "📥 Import Complete",
+      "input": "Input File",
+      "imported": "Imported Count",
+      "duplicates": "Duplicates Skipped",
+      "errors": "Error Count"
+    },
+    "graph": {
+      "description": "Show memory relationship graph",
+      "title": "🕸️ Memory Graph",
+      "memory": "Memory",
+      "relations": "Relations",
+      "maxDepth": "Max Depth",
+      "maxNodes": "Max Nodes"
+    },
+    "timeline": {
+      "description": "Show memory timeline",
+      "title": "📅 Memory Timeline",
+      "scope": "Scope",
+      "date": "Date",
+      "memory": "Memory"
+    },
+    "conflicts": {
+      "description": "Show conflict chain",
+      "title": "⚠️ Conflict Chain",
+      "memory": "Memory",
+      "supersededBy": "Superseded By",
+      "supersedes": "Supersedes",
+      "chainLength": "Chain Length"
+    },
+    "config": {
+      "description": "View or modify configuration",
+      "title": "⚙️ Configuration",
+      "key": "Key",
+      "value": "Value",
+      "updated": "Updated",
+      "invalid": "Invalid Config"
+    },
+    "stats": {
+      "description": "Show memory statistics",
+      "title": "📊 Statistics",
+      "total": "Total",
+      "byKind": "By Kind",
+      "byScope": "By Scope",
+      "byStatus": "By Status"
+    },
+    "clean": {
+      "description": "Clean expired memories",
+      "title": "🧹 Cleanup Complete",
+      "archived": "Archived Count",
+      "deleted": "Deleted Count"
+    },
+    "locale": {
+      "description": "Set or view language",
+      "title": "🌐 Language Settings",
+      "current": "Current Language",
+      "available": "Available Languages",
+      "switched": "Switched",
+      "unsupported": "Unsupported Language"
+    }
+  },
+  "panel": {
+    "title": "Context Hub Panel",
+    "tabs": {
+      "status": "Status",
+      "memory": "Memory",
+      "recall": "Recall",
+      "compaction": "Compaction",
+      "settings": "Settings"
+    },
+    "sections": {
+      "contextPressure": {
+        "title": "Context Pressure",
+        "tokens": "Token Usage",
+        "turns": "Conversation Turns",
+        "compression": "Compression Ratio"
+      },
+      "memoryOverview": {
+        "title": "Memory Overview",
+        "total": "Total",
+        "session": "Session",
+        "project": "Project",
+        "global": "Global"
+      },
+      "recallMetrics": {
+        "title": "Recall Metrics",
+        "hitRate": "Hit Rate",
+        "avgLatency": "Avg Latency",
+        "timeoutRate": "Timeout Rate"
+      },
+      "compactionMetrics": {
+        "title": "Compaction Metrics",
+        "totalCompressions": "Total Compressions",
+        "avgCompression": "Avg Compression",
+        "lastCompact": "Last Compact"
+      }
+    },
+    "actions": {
+      "refresh": "Refresh",
+      "export": "Export",
+      "settings": "Settings",
+      "help": "Help"
+    }
+  },
+  "errors": {
+    "database": "Database error: {error}",
+    "query": "Query error: {error}",
+    "timeout": "Operation timeout",
+    "notFound": "Not found: {item}",
+    "invalidConfig": "Invalid config: {key}",
+    "permission": "Insufficient permission",
+    "memory": "Out of memory",
+    "network": "Network error",
+    "unknown": "Unknown error"
+  },
+  "validation": {
+    "required": "Required field",
+    "invalidFormat": "Invalid format",
+    "outOfRange": "Out of range",
+    "tooShort": "Too short",
+    "tooLong": "Too long",
+    "duplicate": "Already exists"
+  },
+  "common": {
+    "yes": "Yes",
+    "no": "No",
+    "ok": "OK",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "view": "View",
+    "search": "Search",
+    "filter": "Filter",
+    "sort": "Sort",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "warning": "Warning",
+    "info": "Info",
+    "unknown": "Unknown",
+    "n/a": "N/A",
+    "all": "All",
+    "none": "None",
+    "more": "More",
+    "less": "Less",
+    "reset": "Reset",
+    "apply": "Apply",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "finish": "Finish"
+  },
+  "memory": {
+    "kind": {
+      "decision": "Decision",
+      "fact": "Fact",
+      "preference": "Preference",
+      "task": "Task",
+      "skill": "Skill",
+      "summary": "Summary"
+    },
+    "scope": {
+      "session": "Session",
+      "project": "Project",
+      "global": "Global"
+    },
+    "status": {
+      "active": "Active",
+      "superseded": "Superseded",
+      "archived": "Archived",
+      "deleted": "Deleted",
+      "pending": "Pending"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "general": {
+      "title": "General",
+      "language": "Language",
+      "theme": "Theme",
+      "autoSave": "Auto Save"
+    },
+    "memory": {
+      "title": "Memory",
+      "ttl": "TTL",
+      "capacity": "Capacity",
+      "conflictPolicy": "Conflict Policy"
+    },
+    "recall": {
+      "title": "Recall",
+      "maxItems": "Max Items",
+      "maxTokens": "Max Tokens",
+      "timeout": "Timeout",
+      "cooldown": "Cooldown"
+    },
+    "compaction": {
+      "title": "Compaction",
+      "compactor": "Compactor",
+      "watermark": "Watermark",
+      "mode": "Mode"
+    },
+    "advanced": {
+      "title": "Advanced",
+      "embedding": "Vector Recall",
+      "rewrite": "Query Rewrite",
+      "rerank": "Rerank"
+    }
+  },
+  "help": {
+    "title": "Help",
+    "overview": "Context Hub is a DSH plugin that combines compression, memory, and insight.",
+    "features": [
+      "Memory: Auto-extract long-term memories, recall by keywords",
+      "Compaction: 8-section prompt compaction with memory awareness",
+      "Insight: Status panel, event timeline, recall diagnostics"
+    ],
+    "commands": "Available Commands",
+    "docs": "Documentation",
+    "issues": "Issue Feedback",
+    "version": "Version"
   }
 }

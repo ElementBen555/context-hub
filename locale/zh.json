@@ -2,5 +2,321 @@
   "meta": {
     "title": "上下文中枢",
     "description": "把压缩、记忆、洞察合在一个插件里：SQLite 记忆与自动召回、对话结束自动抽取、可选的 8 段压缩器，以及状态与治理面板。"
+  },
+  "commands": {
+    "help": {
+      "description": "显示上下文中枢命令列表",
+      "usage": "/context-hub <command> [args]",
+      "examples": "示例"
+    },
+    "status": {
+      "description": "显示上下文压力、折叠区间、记忆库构成",
+      "title": "📊 上下文中枢状态",
+      "sections": {
+        "contextPressure": "上下文压力",
+        "memoryStats": "记忆统计",
+        "compactionStats": "压缩统计",
+        "recallStats": "召回统计"
+      }
+    },
+    "doctor": {
+      "description": "检查 FTS5、向量、改写、重排、压缩器与水位",
+      "title": "🩺 能力自检",
+      "sections": {
+        "fts5": "FTS5 全文检索",
+        "vector": "向量召回",
+        "rewrite": "查询改写",
+        "rerank": "重排",
+        "compactor": "压缩器",
+        "watermark": "水位接管"
+      }
+    },
+    "probe": {
+      "description": "检索探针：检查记忆召回质量",
+      "title": "🧪 检索探针",
+      "hitRate": "命中率",
+      "sampleSize": "样本量",
+      "confidenceInterval": "置信区间"
+    },
+    "explain": {
+      "description": "召回调试：显示关键词打分明细",
+      "title": "🔍 召回调试",
+      "query": "查询",
+      "budget": "召回预算",
+      "candidates": "候选记忆",
+      "notSelected": "未入选原因"
+    },
+    "history": {
+      "description": "检索历史消息（包括折叠区间）",
+      "title": "📜 历史消息",
+      "query": "查询关键词",
+      "limit": "最多返回条数",
+      "noResults": "未找到匹配消息"
+    },
+    "log": {
+      "description": "查看观测事件时间线",
+      "title": "📅 事件时间线",
+      "events": "事件",
+      "recall": "召回",
+      "extract": "抽取",
+      "compact": "压缩"
+    },
+    "remember": {
+      "description": "写入长期记忆",
+      "title": "💾 记忆已保存",
+      "kind": "类型",
+      "scope": "范围",
+      "tags": "标签"
+    },
+    "search": {
+      "description": "检索长期记忆库",
+      "title": "🔎 记忆检索",
+      "query": "查询",
+      "results": "搜索结果",
+      "noResults": "未找到相关记忆"
+    },
+    "compact": {
+      "description": "手动触发压缩",
+      "title": "📦 压缩完成",
+      "compressed": "压缩区间",
+      "tokens": "节省 token",
+      "chars": "字符数"
+    },
+    "unfold": {
+      "description": "展开压缩摘要",
+      "title": "📤 已展开",
+      "steps": "展开步数",
+      "chars": "字符数"
+    },
+    "exportJsonl": {
+      "description": "导出记忆为 JSONL 格式",
+      "title": "📤 导出完成",
+      "output": "输出文件",
+      "count": "导出数量",
+      "scope": "范围"
+    },
+    "importJsonl": {
+      "description": "导入 JSONL 记忆文件",
+      "title": "📥 导入完成",
+      "input": "输入文件",
+      "imported": "导入数量",
+      "duplicates": "跳过重复",
+      "errors": "错误数量"
+    },
+    "graph": {
+      "description": "显示记忆关系图",
+      "title": "🕸️ 记忆关系图",
+      "memory": "记忆",
+      "relations": "关系",
+      "maxDepth": "最大深度",
+      "maxNodes": "最大节点数"
+    },
+    "timeline": {
+      "description": "显示记忆时间线",
+      "title": "📅 记忆时间线",
+      "scope": "范围",
+      "date": "日期",
+      "memory": "记忆"
+    },
+    "conflicts": {
+      "description": "显示冲突链",
+      "title": "⚠️ 冲突链",
+      "memory": "记忆",
+      "supersededBy": "被取代",
+      "supersedes": "取代",
+      "chainLength": "链长度"
+    },
+    "config": {
+      "description": "查看或修改配置",
+      "title": "⚙️ 配置",
+      "key": "配置项",
+      "value": "值",
+      "updated": "已更新",
+      "invalid": "无效配置"
+    },
+    "stats": {
+      "description": "显示记忆库统计",
+      "title": "📊 统计信息",
+      "total": "总数",
+      "byKind": "按类型",
+      "byScope": "按范围",
+      "byStatus": "按状态"
+    },
+    "clean": {
+      "description": "清理过期记忆",
+      "title": "🧹 清理完成",
+      "archived": "归档数量",
+      "deleted": "删除数量"
+    },
+    "locale": {
+      "description": "设置或查看语言",
+      "title": "🌐 语言设置",
+      "current": "当前语言",
+      "available": "可用语言",
+      "switched": "已切换",
+      "unsupported": "不支持的语言"
+    }
+  },
+  "panel": {
+    "title": "上下文中枢面板",
+    "tabs": {
+      "status": "状态",
+      "memory": "记忆",
+      "recall": "召回",
+      "compaction": "压缩",
+      "settings": "设置"
+    },
+    "sections": {
+      "contextPressure": {
+        "title": "上下文压力",
+        "tokens": "Token 使用",
+        "turns": "对话轮数",
+        "compression": "压缩率"
+      },
+      "memoryOverview": {
+        "title": "记忆概览",
+        "total": "总数",
+        "session": "会话",
+        "project": "项目",
+        "global": "全局"
+      },
+      "recallMetrics": {
+        "title": "召回指标",
+        "hitRate": "命中率",
+        "avgLatency": "平均延迟",
+        "timeoutRate": "超时率"
+      },
+      "compactionMetrics": {
+        "title": "压缩指标",
+        "totalCompressions": "压缩次数",
+        "avgCompression": "平均压缩率",
+        "lastCompact": "上次压缩"
+      }
+    },
+    "actions": {
+      "refresh": "刷新",
+      "export": "导出",
+      "settings": "设置",
+      "help": "帮助"
+    }
+  },
+  "errors": {
+    "database": "数据库错误：{error}",
+    "query": "查询错误：{error}",
+    "timeout": "操作超时",
+    "notFound": "未找到：{item}",
+    "invalidConfig": "无效配置：{key}",
+    "permission": "权限不足",
+    "memory": "内存不足",
+    "network": "网络错误",
+    "unknown": "未知错误"
+  },
+  "validation": {
+    "required": "必填字段",
+    "invalidFormat": "格式错误",
+    "outOfRange": "超出范围",
+    "tooShort": "太短",
+    "tooLong": "太长",
+    "duplicate": "已存在"
+  },
+  "common": {
+    "yes": "是",
+    "no": "否",
+    "ok": "确定",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除",
+    "edit": "编辑",
+    "view": "查看",
+    "search": "搜索",
+    "filter": "过滤",
+    "sort": "排序",
+    "loading": "加载中...",
+    "error": "错误",
+    "success": "成功",
+    "warning": "警告",
+    "info": "信息",
+    "unknown": "未知",
+    "n/a": "不适用",
+    "all": "全部",
+    "none": "无",
+    "more": "更多",
+    "less": "更少",
+    "reset": "重置",
+    "apply": "应用",
+    "close": "关闭",
+    "back": "返回",
+    "next": "下一步",
+    "previous": "上一步",
+    "finish": "完成"
+  },
+  "memory": {
+    "kind": {
+      "decision": "决策",
+      "fact": "事实",
+      "preference": "偏好",
+      "task": "待办",
+      "skill": "技能",
+      "summary": "摘要"
+    },
+    "scope": {
+      "session": "会话",
+      "project": "项目",
+      "global": "全局"
+    },
+    "status": {
+      "active": "活跃",
+      "superseded": "已取代",
+      "archived": "已归档",
+      "deleted": "已删除",
+      "pending": "待审核"
+    }
+  },
+  "settings": {
+    "title": "设置",
+    "general": {
+      "title": "常规",
+      "language": "语言",
+      "theme": "主题",
+      "autoSave": "自动保存"
+    },
+    "memory": {
+      "title": "记忆",
+      "ttl": "过期时间",
+      "capacity": "容量上限",
+      "conflictPolicy": "冲突策略"
+    },
+    "recall": {
+      "title": "召回",
+      "maxItems": "最多条数",
+      "maxTokens": "最多 Token",
+      "timeout": "超时时间",
+      "cooldown": "冷却轮数"
+    },
+    "compaction": {
+      "title": "压缩",
+      "compactor": "压缩器",
+      "watermark": "水位",
+      "mode": "接管模式"
+    },
+    "advanced": {
+      "title": "高级",
+      "embedding": "向量召回",
+      "rewrite": "查询改写",
+      "rerank": "重排"
+    }
+  },
+  "help": {
+    "title": "帮助",
+    "overview": "上下文中枢是一个集压缩、记忆、洞察于一体的 DSH 插件。",
+    "features": [
+      "记忆：自动抽取长期记忆，按关键词召回",
+      "压缩：8 段提示词压缩，支持记忆感知",
+      "洞察：状态面板、事件时间线、召回诊断"
+    ],
+    "commands": "可用命令",
+    "docs": "文档",
+    "issues": "问题反馈",
+    "version": "版本"
   }
 }
