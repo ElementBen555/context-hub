@@ -66,6 +66,7 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 
 ## 已验证
 
+- **1.7.1**：搜索缓存（写入失效）+ 启动实体回填 + 重排空输出重试/强头跳过；面板图谱 chips 与账本明细；`node test-smoke.mjs` → `SMOKE OK`。
 - **1.7.0**：图谱 1-hop（实体/边自动抽取，召回补 ≤2 条）与压缩账本（折叠次数/节省/复问率）；`node test-smoke.mjs` → `SMOKE OK`（含图谱 2 实体/3 链接、账本省 961 tokens）。
 - **1.6.6**：10 万条记忆 + 2 万条消息下 rank p50 **85.6ms / p95 99.8ms / p99 106.6ms**，DB 67MB，RSS 249MB；见 [`docs/SCALE.md`](docs/SCALE.md)。探针在合成语料上 60%（模板重复导致歧义），真实库 8/8。
 （本机 profile `web`）

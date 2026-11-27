@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:f
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { execFileSync } from 'node:child_process'
-import { apply, defaults } from './src/index.js'
+import { apply, defaults, MemoryStore, resolveConfig } from './src/index.js'
 import { DatabaseSync } from 'node:sqlite'
 
 const dbPath = fileURLToPath(new URL('./tmp-smoke.db', import.meta.url))
@@ -1183,4 +1183,32 @@ process.env.DSH_CONTEXT_HUB_DB = dbPath
   console.log('ledger :', `1 次折叠，省 ${ledger[0].saved_tokens} tokens`)
 }
 
+// cache：写入后同一查询必须看到新记忆（缓存失效）
+{
+  const cacheDb = fileURLToPath(new URL('./tmp-smoke-cache.db', import.meta.url))
+  const cacheStore = new MemoryStore(cacheDb, resolveConfig({ recallMaxItems: 5, recallMaxChars: 1200 }))
+  cacheStore.open()
+  cacheStore.insert({ kind: 'fact', text: '缓存测试：蓝鲸项目使用 sqlite 存记忆', project: 'cache-p', scope: 'project', source: 'explicit' })
+  const first = cacheStore.search('蓝鲸 sqlite', { project: 'cache-p' })
+  cacheStore.insert({ kind: 'fact', text: '缓存测试补充：蓝鲸项目新增 redis 缓存层', project: 'cache-p', scope: 'project', source: 'explicit' })
+  const second = cacheStore.search('蓝鲸 sqlite', { project: 'cache-p' })
+  if (first.length === 0 || second.length <= first.length) throw new Error('search cache not invalidated on insert')
+  cacheStore.close()
+  rmSync(cacheDb, { force: true })
+}
+
+// backfill：清空实体链接后启动回填能恢复，且只做一次
+{
+  const backDb = fileURLToPath(new URL('./tmp-smoke-back.db', import.meta.url))
+  const backStore = new MemoryStore(backDb, resolveConfig({}))
+  backStore.open()
+  const memory = backStore.insert({ kind: 'fact', text: '回填测试：项目代号蓝鲸部署在 k8s', tags: ['蓝鲸','部署'], project: 'back-p', source: 'explicit' })
+  backStore.db.prepare('DELETE FROM entity_links').run()
+  backStore.db.prepare("DELETE FROM kv WHERE key = 'entities.backfill'").run()
+  const linked = backStore.backfillEntities()
+  const again = backStore.backfillEntities()
+  if (linked === 0 || again !== 0) throw new Error(`backfill expected once, got ${linked}/${again}`)
+  backStore.close()
+  rmSync(backDb, { force: true })
+}
 console.log('SMOKE OK')

@@ -650,6 +650,7 @@ export class MemoryStore {
     this.file = file
     this.config = config
     this.tokenCache = new Map()
+    this.searchCache = new Map()
     this.db = undefined
     this.embedCache = new Map()
     this.embedQueue = Promise.resolve()
@@ -1028,14 +1029,37 @@ export class MemoryStore {
     } catch { return { count: 0, saved: 0, reask: 0, rate: 0, last: null } }
   }
 
+  /** P2：最近几条账本明细（面板用）。 */
+  recentLedger(limit = 5) {
+    if (this.db === undefined) return []
+    try {
+      return this.db.prepare('SELECT start_seq, end_seq, shadowed_tokens, summary_tokens, saved_tokens, reask, created_at FROM compaction_ledger ORDER BY id DESC LIMIT ?').all(limit)
+    } catch { return [] }
+  }
+
   /** P1：图谱规模。 */
   graphStats() {
     if (this.db === undefined) return { entities: 0, links: 0 }
     try {
       const e = this.db.prepare('SELECT COUNT(*) AS n FROM entities').get()
       const l = this.db.prepare('SELECT COUNT(*) AS n FROM entity_links').get()
-      return { entities: Number(e?.n) || 0, links: Number(l?.n) || 0 }
-    } catch { return { entities: 0, links: 0 } }
+      const top = this.db.prepare(`SELECT e.name AS name, COUNT(el.id) AS n FROM entities e JOIN entity_links el ON el.entity_id = e.id GROUP BY e.id ORDER BY n DESC, e.name LIMIT 6`).all()
+      return { entities: Number(e?.n) || 0, links: Number(l?.n) || 0, top: top.map(row => ({ name: row.name, count: Number(row.n) || 0 })) }
+    } catch { return { entities: 0, links: 0, top: [] } }
+  }
+
+  /** 启动回填：升级前已有记忆没有实体链接，补一次（最多 500 条）。 */
+  backfillEntities(limit = 500) {
+    if (this.db === undefined) return 0
+    if (this.getKv('entities.backfill') === '1') return 0
+    try {
+      const rows = this.db.prepare(`SELECT id, text, tags, project FROM memories WHERE status = 'active' AND id NOT IN (SELECT memory_id FROM entity_links) ORDER BY id DESC LIMIT ?`).all(limit)
+      let linked = 0
+      for (const row of rows) linked += this.linkEntities(row.id, row.text, String(row.tags ?? '').split(',').filter(Boolean), row.project)
+      if (rows.length < limit) this.setKv('entities.backfill', '1')
+      if (linked > 0) this.logEvent('entities-backfill', { detail: `${rows.length} memories → ${linked} links` })
+      return linked
+    } catch { return 0 }
   }
 
   /** W5：待审核列表。 */
@@ -1063,6 +1087,7 @@ export class MemoryStore {
   insert({ kind, text, tags = [], project = '', sessionId = '', scope, confidence, source = 'extracted', evidence = '', messageId = '', messageSeq = 0, sentenceNo = -1, validFrom, validTo }) {
     if (this.db === undefined) return { action: 'unavailable' }
     this.tokenCache.clear()
+    this.searchCache.clear()
     const trimmed = text.trim()
     if (trimmed.length === 0) return { action: 'rejected', reason: 'empty' }
     const safeKind = KIND_VALUES.includes(kind) ? kind : 'fact'
@@ -1472,8 +1497,20 @@ export class MemoryStore {
     return scored.slice(0, limit)
   }
 
-  search(query, options) {
-    return this.rank(query, options)
+  search(query, options = {}) {
+    // 短 TTL 查询缓存：同一轮内改写/重排/上下文兜底会重复查同一句，省掉重复 FTS+打分。
+    const cacheable = options.embVec === null || options.embVec === undefined
+    const key = cacheable ? JSON.stringify([query, options.project ?? '', options.sessionId ?? '', options.limit ?? 0, options.includeAll === true, options.includeInactive === true]) : ''
+    if (cacheable) {
+      const hit = this.searchCache.get(key)
+      if (hit !== undefined && Date.now() - hit.at < 30000) return hit.results
+    }
+    const results = this.rank(query, options)
+    if (cacheable) {
+      if (this.searchCache.size >= 32) this.searchCache.clear()
+      this.searchCache.set(key, { at: Date.now(), results })
+    }
+    return results
   }
 
   /** 独立消息索引：FTS5 候选 rowid → 名次；不可用时返回空 Map。 */
@@ -1664,6 +1701,7 @@ export class MemoryStore {
   /** 软删除：保留审计链，召回不再命中。 */
   forget(id) {
     if (this.db === undefined) return 0
+    this.searchCache.clear()
     const row = this.getById(id)
     if (row === undefined || row.status === 'deleted') return 0
     this.db.prepare("UPDATE memories SET status = 'deleted' WHERE id = ?").run(id)
@@ -1672,6 +1710,7 @@ export class MemoryStore {
 
   /** 用一条显式记忆替代旧条目，保留 supersede 链。 */
   supersede(oldId, text) {
+    this.searchCache.clear()
     const old = this.getById(oldId)
     if (old === undefined) return { action: 'missing' }
     const result = this.insert({
@@ -2401,7 +2440,7 @@ async function maybeRecall(ctx, store, session, event) {
       sessionId: session.id,
       memoryIds: factIds,
       tokens: used,
-      detail: `${via}: ${text.slice(0, 100)}`,
+      detail: `${via}: ${text.slice(0, 100)} (${Date.now() - startedAt}ms)`,
     })
     state.lastRecall = {
       at: nowSeconds(),
@@ -2554,7 +2593,7 @@ async function rerankHits(ctx, store, session, query, hits, agent, deadline) {
   const llm = ctx.get('llm')
   if (llm === undefined) return hits
   const remaining = deadline === undefined ? config.timeoutMs : Math.min(config.timeoutMs, deadline - Date.now())
-  if (remaining < 150) return hits
+  if (remaining < 600) return hits
   const candidates = hits.slice(0, Math.min(config.candidates, hits.length))
   const route = { provider: config.provider, model: config.model }
   if (route.provider.length === 0 || route.model.length === 0) {
@@ -2563,16 +2602,21 @@ async function rerankHits(ctx, store, session, query, hits, agent, deadline) {
     route.provider = fallback.provider
     route.model = fallback.model
   }
+  const topScore = Number(hits[0].score) || 0
+  const secondScore = Number(hits[1].score) || 0
+  if (topScore >= 3 && topScore >= secondScore * 2 + 0.5) return hits
   const listing = candidates.map((item, index) => `${index + 1}) ${item.text}`).join('\n')
   const startedAt = Date.now()
-  try {
+  const ask = async (budget) => {
+    const left = deadline === undefined ? config.timeoutMs : deadline - Date.now()
+    if (left < 400) return ''
     const stream = llm.stream({
       provider: route.provider,
       model: route.model,
       system: RERANK_SYSTEM,
       messages: [{ role: 'user', content: [{ type: 'text', text: `Query: ${query.slice(0, 600)}\nCandidates:\n${listing}` }] }],
-      maxTokens: config.maxTokens,
-      signal: AbortSignal.timeout(Math.max(200, remaining)),
+      maxTokens: budget,
+      signal: AbortSignal.timeout(Math.max(300, Math.min(left, remaining))),
       purpose: 'context-hub:rerank',
     })
     let out = ''
@@ -2580,7 +2624,19 @@ async function rerankHits(ctx, store, session, query, hits, agent, deadline) {
       if (chunk?.type === 'text-delta') out += chunk.text ?? ''
       if (out.length > 400) break
     }
-    const match = out.match(/\[[\d,\s]+\]/)
+    return out
+  }
+  try {
+    let out = await ask(config.maxTokens)
+    let match = out.match(/\[[\d,\s]+\]/)
+    if (match === null) {
+      const left = deadline === undefined ? config.timeoutMs : deadline - Date.now()
+      if (left > 900) {
+        store.logEvent('rerank-retry', { sessionId: session?.id ?? '', detail: `${left}ms left` })
+        out = await ask(Math.min(1600, Math.max(900, config.maxTokens * 2)))
+        match = out.match(/\[[\d,\s]+\]/)
+      }
+    }
     if (match === null) {
       store.logEvent('rerank-empty', { sessionId: session?.id ?? '', detail: out.slice(0, 80) })
       return hits
@@ -3254,7 +3310,7 @@ function statusSnapshot(ctx, store, session, sessionId) {
     activity: [],
   }
   snapshot.graph = store.graphStats()
-  snapshot.ledger = store.ledgerStats(sessionId ?? '')
+  snapshot.ledger = { ...store.ledgerStats(sessionId ?? ''), recent: store.recentLedger(5) }
   if (session !== undefined) {
     const meter = ctx.get('tokenMeter')
     const detail = { id: sessionId ?? String(session.id ?? ''), surfaceTokens: 0, totalTokens: 0, nodes: 0, pressure: undefined, contextWindow: undefined, parts: null, outputReserve: 0, folded: { count: 0, tokens: 0 }, events: Number(session.seq) || 0 }
@@ -4298,6 +4354,7 @@ export function apply(ctx, config) {
     store.open()
     ctx.logger?.info?.(`context-hub: memory store at ${store.file}`)
     applyStoredConfig(store)
+    try { store.backfillEntities() } catch { /* 回填失败不影响启动 */ }
     if (settings.embedding.enabled) {
       const cleared = store.resetEmbeddings()
       if (cleared > 0) store.logEvent('embedding-reset', { detail: `model ${settings.embedding.model}（清 ${cleared} 条旧向量）` })

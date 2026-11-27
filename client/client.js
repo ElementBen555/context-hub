@@ -662,11 +662,25 @@ window.__ModuleLoader__.load({
               { key: 'reask', label: '复问率', value: `${Math.round(Number(snapshot.ledger.rate) * 100)}%` },
               { key: 'last', label: '最近区间', value: snapshot.ledger.last ? `seq ${snapshot.ledger.last.start_seq}-${snapshot.ledger.last.end_seq}` : '—' },
             ]
+            const recentLedger = Array.isArray(snapshot.ledger.recent) ? snapshot.ledger.recent : []
             sections.push(h(Section, { key: 'ledger', title: '压缩账本', extra: '只读 · 不接管原生压缩' },
               h('table', { className: 'chp-table' },
                 h('tbody', null, ledgerRows.map(row => h('tr', { key: row.key },
                   h('td', null, row.label),
-                  h('td', { className: 'num' }, row.value)))))))
+                  h('td', { className: 'num' }, row.value))))),
+              recentLedger.length > 0
+                ? h('table', { className: 'chp-table', style: { marginTop: '6px' } },
+                    h('thead', null, h('tr', null,
+                      h('th', null, '区间'), h('th', { className: 'num' }, '折叠'),
+                      h('th', { className: 'num' }, '摘要'), h('th', { className: 'num' }, '节省'),
+                      h('th', null, '复问'))),
+                    h('tbody', null, recentLedger.map((row, index) => h('tr', { key: `${row.start_seq}-${row.end_seq}-${index}` },
+                      h('td', { className: 'chp-mono' }, `seq ${row.start_seq}-${row.end_seq}`),
+                      h('td', { className: 'num' }, fmt(row.shadowed_tokens)),
+                      h('td', { className: 'num' }, fmt(row.summary_tokens)),
+                      h('td', { className: 'num' }, fmt(row.saved_tokens)),
+                      h('td', null, Number(row.reask) > 0 ? '是' : '—')))))
+                : null))
           }
 
           if (requests.length > 0) {
@@ -769,6 +783,11 @@ window.__ModuleLoader__.load({
               snapshot.graph !== undefined && Number(snapshot.graph.entities) > 0
                 ? `图谱：${fmt(snapshot.graph.entities)} 个实体 / ${fmt(snapshot.graph.links)} 条链接（召回时 1-hop 补 ≤2 条）`
                 : '图谱：暂无实体（记忆写入时自动抽取）'),
+            snapshot.graph !== undefined && Array.isArray(snapshot.graph.top) && snapshot.graph.top.length > 0
+              ? h('div', { className: 'chp-chips', style: { marginTop: '4px' } },
+                  snapshot.graph.top.map(item => h('span', { key: item.name, className: 'chp-chip-cap', title: `${item.count} 条链接` },
+                    `${item.name} ${fmt(item.count)}`)))
+              : null,
             h('div', { className: 'chp-note' }, `存储：${snapshot.db}`)))
 
           if (pendingItems.length > 0) {
