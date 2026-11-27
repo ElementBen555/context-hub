@@ -632,7 +632,7 @@ const rw2Ctx = {
 }
 apply(rw2Ctx, { rewrite: { enabled: true, provider: 'fake', model: 'fake-model' } })
 const rewriteCmd = rw2Commands.get('context-hub')
-const explainOut = await rewriteCmd.handler({ agent: { ...agent, session }, signal: new AbortController().signal, commandId: 'cmd-rw', rawInput: 'explain 中文回答' })
+const explainOut = await rewriteCmd.handler({ agent: { ...agent, session }, signal: new AbortController().signal, commandId: 'cmd-rw', rawInput: 'explain 中文回答应该怎么写更自然' })
 if (!explainOut.text.includes('改写：同义 改写 词')) throw new Error('rewrite missing: ' + explainOut.text.slice(0, 200))
 console.log('rewrite :', 'explain 带改写行 ok')
 

@@ -71,7 +71,7 @@ export const defaults = {
   embedding: { enabled: false, baseUrl: '', model: '', apiKeyEnv: 'DSH_CONTEXT_HUB_EMBED_KEY', minScore: 0.35, timeoutMs: 1500, autoStart: true, fusion: 'weighted', dtype: 'fp32' },
   /** 查询改写（可选）：一次 LLM 调用把查询扩成同义词/英文关键词；失败回退原查询。 */
   rewrite: { enabled: false, provider: '', model: '', maxTokens: 1200, timeoutMs: 12000, cacheSize: 128 },
-  rerank: { enabled: false, provider: '', model: '', candidates: 10, maxTokens: 600, timeoutMs: 8000 },
+  rerank: { enabled: false, provider: '', model: '', candidates: 6, maxTokens: 600, timeoutMs: 8000 },
   /** 压缩水位（可选，实验）：插件在 pre-step 主动选区间压缩；默认关闭，失败回退原生。 */
   watermark: { enabled: false, triggerRatio: 0.7, retainTokens: 20000, retainTurns: 0, cooldownTurns: 1, minRegionNodes: 4 },
   /** 消息级展开：用原文临时替代压缩摘要的步数与字符预算。 */
@@ -2286,9 +2286,11 @@ async function maybeRecall(ctx, store, session, event) {
   const agent = ctx.get('agents')?.get(session.id)
   // 硬时限：模型改写/重排占满预算时，宁可本次不注入，也不让记忆拖慢下一步。
   const rewritten = await rewriteQuery(ctx, store, agent, session, text, deadline)
+  const rewriteMs = Date.now() - startedAt
   const searchText = rewritten === null ? text : `${text} ${rewritten}`
   if (rewritten !== null) via = 'query+rewrite'
   const queryVec = timeLeft() > 120 ? await store.embedQuery(searchText) : null
+  const embedMs = Date.now() - startedAt - rewriteMs
   let hits = store.search(searchText, { limit: store.config.recallMaxItems * 3, project, sessionId: session.id, embVec: queryVec }).filter(usable)
   if (hits.length === 0) {
     const context = recentContext(session, event.seq)
@@ -2298,7 +2300,9 @@ async function maybeRecall(ctx, store, session, event) {
       hits = store.search(context, { limit: store.config.recallMaxItems * 3, project, sessionId: session.id, embVec: contextVec }).filter(usable)
     }
   }
+  const searchMs = Date.now() - startedAt - rewriteMs - embedMs
   hits = await rerankHits(ctx, store, session, text, hits, agent, deadline)
+  const rerankMs = Date.now() - startedAt - rewriteMs - embedMs - searchMs
 
   // B2 阶段 2：按来源消息聚合排序——同一消息命中多条时优先整组进入预算。
   const groupScore = new Map()
@@ -2440,7 +2444,7 @@ async function maybeRecall(ctx, store, session, event) {
       sessionId: session.id,
       memoryIds: factIds,
       tokens: used,
-      detail: `${via}: ${text.slice(0, 100)} (${Date.now() - startedAt}ms)`,
+      detail: `${via}: ${text.slice(0, 100)} (${Date.now() - startedAt}ms; rw ${rewriteMs} em ${embedMs} se ${searchMs} rr ${rerankMs})`,
     })
     state.lastRecall = {
       at: nowSeconds(),
@@ -2513,6 +2517,7 @@ const REWRITE_SYSTEM = [
 async function rewriteQuery(ctx, store, agent, session, text, deadline) {
   const config = store.config.rewrite
   if (config?.enabled !== true || typeof text !== 'string' || text.length === 0) return null
+  if (text.trim().length < 8) return null
   const cached = store.rewriteCache.get(text)
   if (cached !== undefined) return cached
   const remaining = deadline === undefined ? config.timeoutMs : Math.min(config.timeoutMs, deadline - Date.now())
