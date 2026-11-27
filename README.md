@@ -8,6 +8,7 @@
 > - [docs/comparison.md](docs/comparison.md) — 与 billion-context / dsh-memory（灵枢）/ OpenViking / graph-memory / dsh-mnemon 的六方对比、W1–W8 弱项拆解与五维补强计划
 > - [docs/EVAL.md](docs/EVAL.md) — 召回评测脚手架、R@k/MRR 口径、zh-holdout 与 LongMemEval 用法
 > - [docs/RELEASE.md](docs/RELEASE.md) — npm / dshmarket 发布清单与回滚（D2，当前受 npm 账号阻塞）
+> - [docs/ROADMAP.md](docs/ROADMAP.md) — 补强路线图（P0 评估 / P1 图谱 / P2 压缩账本 / P3 规模 / P4 CI / P5 npm / P6 多平台），后续开发按此执行
 
 ## 为什么是「一个」而不是「三个」
 
@@ -63,7 +64,10 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 
 > 注意：`ctx.tools.register` 的 `parameters` / `output.schema` 必须是标准 JSON Schema（对象上用 `required: [...]` 数组），不能写逐属性的 `required: true`——那是 `defineTool` 的简写，只有它会归一化。
 
-## 已验证（本机 profile `web`）
+## 已验证
+
+- **1.6.6**：10 万条记忆 + 2 万条消息下 rank p50 **85.6ms / p95 99.8ms / p99 106.6ms**，DB 67MB，RSS 249MB；见 [`docs/SCALE.md`](docs/SCALE.md)。探针在合成语料上 60%（模板重复导致歧义），真实库 8/8。
+（本机 profile `web`）
 
 - 1.6.4：面板图表/甜甜圈/缓存环增强，`node test-smoke.mjs` → `SMOKE OK`。
 - 1.6.3：`cordis_inspect` 显示左栏 `sidebar.footer.action` 注册 occupant `id=context-hub-status`、`order=2`、`active:true`；`conversation.composer.dock` 只挂隐藏的 `ComposerAnchor`。

@@ -31,7 +31,7 @@ const STATUS_VALUES = ['active', 'superseded', 'archived', 'deleted', 'pending']
 const EXTRACT_MAX_INPUT = 8000
 
 /** 每个 scope 参与打分的最近条目数；超出部分靠 FTS 命中补齐（W6）。 */
-const CANDIDATE_WINDOW = 800
+const CANDIDATE_WINDOW = 400
 
 /** 默认配置；可被插件 config（cordis.patch.yml）或环境变量覆盖。 */
 export const defaults = {
@@ -649,6 +649,7 @@ export class MemoryStore {
   constructor(file, config) {
     this.file = file
     this.config = config
+    this.tokenCache = new Map()
     this.db = undefined
     this.embedCache = new Map()
     this.embedQueue = Promise.resolve()
@@ -710,6 +711,9 @@ export class MemoryStore {
       CREATE INDEX IF NOT EXISTS memories_kind ON memories(kind);
       CREATE INDEX IF NOT EXISTS memories_scope ON memories(scope, status);
       CREATE INDEX IF NOT EXISTS memories_status_scope ON memories(status, scope);
+      CREATE INDEX IF NOT EXISTS memories_session_recent ON memories(session_id, created_at DESC) WHERE status = 'active';
+      CREATE INDEX IF NOT EXISTS memories_project_recent ON memories(project, created_at DESC) WHERE status = 'active';
+      CREATE INDEX IF NOT EXISTS memories_scope_recent ON memories(scope, created_at DESC) WHERE status = 'active';
       CREATE TABLE IF NOT EXISTS context_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         kind TEXT NOT NULL,
@@ -914,6 +918,7 @@ export class MemoryStore {
    */
   insert({ kind, text, tags = [], project = '', sessionId = '', scope, confidence, source = 'extracted', evidence = '', messageId = '', messageSeq = 0, sentenceNo = -1, validFrom, validTo }) {
     if (this.db === undefined) return { action: 'unavailable' }
+    this.tokenCache.clear()
     const trimmed = text.trim()
     if (trimmed.length === 0) return { action: 'rejected', reason: 'empty' }
     const safeKind = KIND_VALUES.includes(kind) ? kind : 'fact'
@@ -1123,22 +1128,51 @@ export class MemoryStore {
     if (this.db === undefined || this.ftsReady !== true) return new Map()
     const cleaned = String(query).replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
     if (cleaned.length < 3) return new Map()
-    const words = (cleaned.match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 8)
-    const expressions = [cleaned]
-    if (words.length > 0) expressions.push(words.map(word => `"${word}"`).join(' OR '))
-    for (const expression of expressions) {
+    const words = (cleaned.match(/[\p{L}\p{N}]{3,}/gu) ?? [])
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 3)
+    const quoted = words.map(word => `"${word}"`)
+    const ranked = [
+      `"${cleaned.replace(/"/g, '')}"`,
+      quoted.slice(0, 2).join(' AND '),
+      quoted.join(' AND '),
+    ].filter(Boolean)
+    const run = (expression, ordered) => {
+      const sql = `SELECT rowid AS id FROM memories_fts WHERE memories_fts MATCH ?${ordered ? ' ORDER BY bm25(memories_fts)' : ''} LIMIT 50`
+      return this.db.prepare(sql).all(expression)
+    }
+    for (const expression of ranked) {
       try {
-        const rows = this.db.prepare(
-          'SELECT rowid AS id FROM memories_fts WHERE memories_fts MATCH ? ORDER BY bm25(memories_fts) LIMIT 50',
-        ).all(expression)
+        const rows = run(expression, true)
         if (rows.length > 0) {
           const map = new Map()
           rows.forEach((row, index) => map.set(row.id, index))
           return map
         }
-      } catch { /* 语法不合法时退回关键词路径 */ }
+      } catch { /* 语法错误时继续下一种表达式 */ }
+    }
+    // 兜底：OR 不排序（常见词会命中十万级文档，bm25 排序代价太高），命中只作弱加成。
+    if (quoted.length > 0) {
+      try {
+        const rows = run(quoted.join(' OR '), false)
+        if (rows.length > 0) {
+          const map = new Map()
+          rows.forEach((row, index) => map.set(row.id, index))
+          return map
+        }
+      } catch { /* ignore */ }
     }
     return new Map()
+  }
+
+  /** 词元缓存：同一批候选在连续查询/探针里复用，避免反复分词。 */
+  haystackTokens(row) {
+    let set = this.tokenCache.get(row.id)
+    if (set !== undefined) return set
+    set = expandQueryTokens(`${row.text} ${row.tags}`)
+    if (this.tokenCache.size >= 5000) this.tokenCache.clear()
+    this.tokenCache.set(row.id, set)
+    return set
   }
 
   /** 排序并给出逐项打分明细；search 与 explain 共用同一套逻辑。 */
@@ -1154,15 +1188,19 @@ export class MemoryStore {
         // session 记忆只在它自己的会话里可见；没有会话上下文时一条都不取，避免跨会话串味。
         if (sessionId.length === 0) continue
         rows.push(...this.db.prepare(
-          `SELECT * FROM memories WHERE scope = 'session' AND session_id = ?${statusClause} ORDER BY last_used DESC, created_at DESC LIMIT ${CANDIDATE_WINDOW}`,
+          `SELECT * FROM memories WHERE scope = 'session' AND session_id = ?${statusClause} ORDER BY created_at DESC, id DESC LIMIT ${CANDIDATE_WINDOW}`,
         ).all(sessionId))
       } else if (scope === 'project' && project.length > 0) {
+        // 拆成两条等值查询，避免 (project = ? OR project = '') 让索引失效。
         rows.push(...this.db.prepare(
-          `SELECT * FROM memories WHERE scope = 'project' AND (project = ? OR project = '')${statusClause} ORDER BY last_used DESC, created_at DESC LIMIT ${CANDIDATE_WINDOW}`,
+          `SELECT * FROM memories WHERE scope = 'project' AND project = ?${statusClause} ORDER BY created_at DESC, id DESC LIMIT ${CANDIDATE_WINDOW}`,
         ).all(project))
+        rows.push(...this.db.prepare(
+          `SELECT * FROM memories WHERE scope = 'project' AND project = ''${statusClause} ORDER BY created_at DESC, id DESC LIMIT ${CANDIDATE_WINDOW}`,
+        ).all())
       } else {
         rows.push(...this.db.prepare(
-          `SELECT * FROM memories WHERE scope = ?${statusClause} ORDER BY last_used DESC, created_at DESC LIMIT ${CANDIDATE_WINDOW}`,
+          `SELECT * FROM memories WHERE scope = ?${statusClause} ORDER BY created_at DESC, id DESC LIMIT ${CANDIDATE_WINDOW}`,
         ).all(scope))
       }
     }
@@ -1191,7 +1229,7 @@ export class MemoryStore {
     const weight = { session: 1.0, project: 0.8, global: 0.6 }
     const candidates = []
     for (const row of rows) {
-      const haystack = expandQueryTokens(`${row.text} ${row.tags}`)
+      const haystack = this.haystackTokens(row)
       let overlap = 0
       for (const token of queryTokens) if (haystack.has(token)) overlap += 1
       const ftsPosition = ftsMap.get(row.id)
@@ -1209,7 +1247,7 @@ export class MemoryStore {
       const ratio = overlap / queryTokens.size
       const boost = row.kind === 'preference' ? 1 : 0
       // FTS 只做加成：新关键词落在第 0 名加 1.0，靠后衰减到 0.3。
-      const ftsBoost = ftsPosition === undefined ? 0 : 0.3 + 0.7 * (1 - ftsPosition / Math.max(1, ftsMap.size))
+      const ftsBoost = ftsPosition === undefined ? 0 : 0.8
       const lexicalBase = overlap > 0 ? overlap + ratio * 2 + boost : (ftsPosition === undefined ? 0 : 0.8)
       const weightedEmb = hasVector ? 0.5 + 0.5 * cos : 0
       const days = Math.max(0, (now - (row.last_used || row.created_at)) / daySeconds())
@@ -1409,7 +1447,7 @@ export class MemoryStore {
       const ftsPosition = ftsMap.get(row.id)
       if (overlap === 0 && ftsPosition === undefined) continue
       const ratio = overlap / queryTokens.size
-      const ftsBoost = ftsPosition === undefined ? 0 : 0.3 + 0.7 * (1 - ftsPosition / Math.max(1, ftsMap.size))
+      const ftsBoost = ftsPosition === undefined ? 0 : 0.8
       const base = overlap + ratio * 2 + ftsBoost
       const days = Math.max(0, (now - (row.last_used || row.created_at || now)) / daySeconds())
       const decay = Math.exp(-0.02 * days)
@@ -1443,13 +1481,17 @@ export class MemoryStore {
   probe({ limit = 10, project = '', sessionId = '' } = {}) {
     if (this.db === undefined) return { total: 0, hits: 0, rate: 0, cases: [] }
     const rows = this.db.prepare(
-      "SELECT id, text, kind, scope, project FROM memories WHERE status = 'active' AND length(text) >= 8 ORDER BY last_used DESC, id DESC LIMIT 200",
+      "SELECT id, text, kind, scope, project, session_id FROM memories WHERE status = 'active' AND length(text) >= 8 ORDER BY last_used DESC, id DESC LIMIT 200",
     ).all()
     const df = new Map()
     for (const row of rows) for (const token of new Set(tokens(row.text))) df.set(token, (df.get(token) ?? 0) + 1)
     const cases = []
     for (const row of rows) {
-      const rare = [...new Set(tokens(row.text))]
+      // trigram FTS 匹配不了 2 字词：优先选 3 字以上的稀有词，长度不足时再退回 bigram。
+      const all = [...new Set(tokens(row.text))]
+      const long = all.filter(token => token.length >= 3)
+      const pool = long.length >= 2 ? long : [...long, ...all.filter(token => token.length < 3)]
+      const rare = pool
         .sort((a, b) => (df.get(a) - df.get(b)) || (b.length - a.length))
         .slice(0, 2)
       if (rare.length === 0) continue
