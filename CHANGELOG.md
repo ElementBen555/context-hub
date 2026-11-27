@@ -1,5 +1,105 @@
 # 变更记录
 
+## [1.8.0] - 2026-11-27
+
+### 🎉 重大更新：完成所有 P1/P2 补强任务
+
+本次发布完成了 comparison.md 中列出的所有剩余补强任务（A1/A3/A4/B5/C4/C5/E4/A5/E3/E5/D4/D5），共计 12 个新功能与改进。
+
+#### P1 任务完成（7 个）
+
+**A1 - 确定性优先的写入**
+- 新增显式信号检测（记住/不要/偏好/约定/待办）
+- 零 LLM 直接写入，`source=explicit`，`confidence=1.0`
+- 减少抽取 LLM 调用，降低写入成本
+
+**A3 - 三类冲突判定**
+- 否定翻转（"不要/不再/取消"）
+- 数值变更（版本号、阈值、配置值）
+- 状态迁移（open→closed, pending→done）
+- 冲突类型记录到 `conflict-detected` 事件
+
+**A4 - 分层复核**
+- 新增 `reviewPolicy` 配置（`off`/`low-confidence`/`layered`）
+- `layered` 策略：`decision`/`skill` 类自动入 `pending`
+- 审核流更细粒度
+
+**B5 - 查询卫生**
+- 排除注入块、工具结果、插件消息
+- 只取真人用户消息构造查询
+- 避免自我召回污染
+
+**C4 - 压缩回执**
+- 返回 `ledger` 对象（区间/压缩比/耗时/提示词版本）
+- `compact-hub` 事件记录完整回执
+- status/面板可查压缩历史
+
+**C5 - 摘要质量闭环**
+- 8 段校验（`parseSummaryBlocks`）
+- 结转未完成事项（从上一版摘要提取）
+- 空输出重试（3000→8000 tokens）
+- `sectionCheck` 与 `missingSections` 记录到回执
+
+**E4 - 诚实指标**
+- `probe` 显示样本量 `n` 与 95% 置信区间
+- 使用 Wilson 区间近似
+- 标注"自造探针不构成泛化证据"
+
+#### P2 任务完成（5 个）
+
+**A5 - 语义近邻去重**
+- 新增 `findNearDuplicates()` 检测 cosine ≥0.92 的重复候选
+- 基于向量相似度，与词法 jaccard 互补
+
+**E3 - 记忆视图**
+- 新增 `/context-hub graph <编号>` - 关系图（多跳邻居）
+- 新增 `/context-hub timeline [scope]` - 时间线
+- 新增 `/context-hub conflicts <编号>` - 冲突链追溯
+
+**E5 - 导出与日志**
+- 新增 `exportToJSONL()` - JSONL 格式导出
+- 新增 `importFromJSONL()` - 幂等导入（基于 hash 去重）
+- 新增 `/context-hub export-jsonl` 命令
+- 新增 `/context-hub import-jsonl <路径>` 命令
+
+**D4 - 兼容矩阵文档**
+- 新增 `docs/COMPATIBILITY.md`
+- DSH 版本兼容性（0.2.x 推荐）
+- Node.js 版本要求（≥22.13.0）
+- 操作系统支持（Ubuntu/Debian/macOS/Windows）
+- 升级路径与故障排查
+
+**D5 - 可移植**
+- JSONL 导出/幂等导入已实现（与 E5 合并）
+- 支持迁移和备份恢复
+
+### 新增命令（5 个）
+- `/context-hub export-jsonl` - JSONL 格式导出
+- `/context-hub import-jsonl <路径>` - 幂等导入
+- `/context-hub graph <编号>` - 记忆关系图
+- `/context-hub timeline [scope]` - 记忆时间线
+- `/context-hub conflicts <编号>` - 冲突链追溯
+
+### 新增 API（7 个）
+- `parseSummaryBlocks()` - 8 段摘要解析
+- `sanitizeQueryText()` - 查询卫生
+- `extractExplicitMemories()` - 显式信号检测
+- `classifyConflict()` - 冲突分类
+- `findNearDuplicates()` - 近邻去重
+- `memoryGraph()` - 关系图
+- `conflictChain()` - 冲突链
+
+### 文档更新
+- 新增 `docs/COMPATIBILITY.md` - 兼容性矩阵
+- 更新 `docs/comparison.md` - 标记所有任务完成
+
+### 测试
+- 所有冒烟测试通过：`SMOKE OK`
+- 新增 JSONL 导出/导入测试
+- 新增记忆视图命令测试
+
+---
+
 ## [1.7.4] - 2026-11-27
 
 ### 修复面板压缩器切换
