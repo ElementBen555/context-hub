@@ -655,6 +655,20 @@ window.__ModuleLoader__.load({
               h(Composition, { parts: session.parts })))
           }
 
+          if (snapshot.ledger !== undefined && Number(snapshot.ledger.count) > 0) {
+            const ledgerRows = [
+              { key: 'count', label: '折叠次数', value: fmt(snapshot.ledger.count) },
+              { key: 'saved', label: '累计节省', value: `${fmt(snapshot.ledger.saved)} tokens` },
+              { key: 'reask', label: '复问率', value: `${Math.round(Number(snapshot.ledger.rate) * 100)}%` },
+              { key: 'last', label: '最近区间', value: snapshot.ledger.last ? `seq ${snapshot.ledger.last.start_seq}-${snapshot.ledger.last.end_seq}` : '—' },
+            ]
+            sections.push(h(Section, { key: 'ledger', title: '压缩账本', extra: '只读 · 不接管原生压缩' },
+              h('table', { className: 'chp-table' },
+                h('tbody', null, ledgerRows.map(row => h('tr', { key: row.key },
+                  h('td', null, row.label),
+                  h('td', { className: 'num' }, row.value)))))))
+          }
+
           if (requests.length > 0) {
             const series = requests.slice(0, 20).reverse()
             const totals = series.map(item => Number(item.estTokens) || 0)
@@ -751,6 +765,10 @@ window.__ModuleLoader__.load({
                 h('span', null, '最近使用'),
                 h('span', { className: 'chp-mono', style: { fontWeight: 400, letterSpacing: 0 } }, `${(memory.recent ?? []).length} 条`)),
               recentExpanded ? h('div', { style: { marginTop: '6px' } }, h(MemoryTable, { memory, onAction })) : null),
+            h('div', { className: 'chp-note' },
+              snapshot.graph !== undefined && Number(snapshot.graph.entities) > 0
+                ? `图谱：${fmt(snapshot.graph.entities)} 个实体 / ${fmt(snapshot.graph.links)} 条链接（召回时 1-hop 补 ≤2 条）`
+                : '图谱：暂无实体（记忆写入时自动抽取）'),
             h('div', { className: 'chp-note' }, `存储：${snapshot.db}`)))
 
           if (pendingItems.length > 0) {

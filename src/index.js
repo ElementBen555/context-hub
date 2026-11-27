@@ -739,6 +739,38 @@ export class MemoryStore {
       );
       CREATE INDEX IF NOT EXISTS memory_links_from ON memory_links(from_id);
       CREATE INDEX IF NOT EXISTS memory_links_to ON memory_links(to_id);
+      CREATE TABLE IF NOT EXISTS entities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'term',
+        project TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        UNIQUE(project, name)
+      );
+      CREATE TABLE IF NOT EXISTS entity_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        memory_id INTEGER NOT NULL,
+        entity_id INTEGER NOT NULL,
+        weight REAL NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        UNIQUE(memory_id, entity_id)
+      );
+      CREATE INDEX IF NOT EXISTS entity_links_memory ON entity_links(memory_id);
+      CREATE INDEX IF NOT EXISTS entity_links_entity ON entity_links(entity_id);
+      CREATE TABLE IF NOT EXISTS compaction_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        compaction_id TEXT NOT NULL DEFAULT '',
+        session_id TEXT NOT NULL DEFAULT '',
+        start_seq INTEGER NOT NULL DEFAULT 0,
+        end_seq INTEGER NOT NULL DEFAULT 0,
+        shadowed_tokens INTEGER NOT NULL DEFAULT 0,
+        summary_tokens INTEGER NOT NULL DEFAULT 0,
+        saved_tokens INTEGER NOT NULL DEFAULT 0,
+        reask INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        UNIQUE(compaction_id)
+      );
+      CREATE INDEX IF NOT EXISTS compaction_ledger_session ON compaction_ledger(session_id, created_at DESC);
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL DEFAULT '',
@@ -894,6 +926,118 @@ export class MemoryStore {
     return out
   }
 
+  /** P1：从文本/标签抽取实体并连到记忆（启发式，零额外 LLM 调用）。 */
+  linkEntities(memoryId, text, tags, project) {
+    if (this.db === undefined || !Number.isFinite(memoryId)) return 0
+    const names = new Set()
+    for (const tag of Array.isArray(tags) ? tags : []) {
+      const value = String(tag ?? '').trim()
+      if (value.length >= 2 && value.length <= 40) names.add(value)
+    }
+    const source = String(text ?? '')
+    for (const match of source.matchAll(/[\u201c\u201d"']([^\u201c\u201d"']{2,30})[\u201c\u201d"']/g)) names.add(match[1].trim())
+    for (const match of source.matchAll(/(?:^|[\s(（])((?:[\w.-]+\/)+[\w.-]+|\b[A-Z][A-Z0-9_]{2,}\b)/g)) names.add(match[1].trim())
+    for (const match of source.matchAll(/\b[a-z]+(?:[A-Z][a-z0-9]+)+\b/g)) names.add(match[0])
+    const list = [...names].filter((name) => name.length >= 2).slice(0, 8)
+    if (list.length === 0) return 0
+    const now = nowSeconds()
+    let linked = 0
+    try {
+      const upsert = this.db.prepare('INSERT INTO entities (name, kind, project, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(project, name) DO UPDATE SET name = excluded.name RETURNING id')
+      const link = this.db.prepare('INSERT INTO entity_links (memory_id, entity_id, weight, created_at) VALUES (?, ?, 1, ?) ON CONFLICT(memory_id, entity_id) DO NOTHING')
+      for (const name of list) {
+        const row = upsert.get(name, 'term', project, now)
+        if (row?.id !== undefined) { link.run(memoryId, row.id, now); linked += 1 }
+      }
+    } catch { /* 图谱是附加信息，失败不影响写入 */ }
+    return linked
+  }
+
+  /** P1：1-hop 图谱邻居——与给定记忆共享实体的其它记忆。 */
+  graphNeighbors(ids, { limit = 2, project = '' } = {}) {
+    if (this.db === undefined || ids.length === 0) return []
+    const placeholders = ids.map(() => '?').join(',')
+    const clause = project.length > 0 ? "AND (m.project = ? OR m.project = '')" : ''
+    const rows = this.db.prepare(`
+      SELECT m.*, SUM(el2.weight) AS graph_weight, GROUP_CONCAT(DISTINCT e.name) AS via_entities
+      FROM entity_links el1
+      JOIN entity_links el2 ON el2.entity_id = el1.entity_id
+      JOIN memories m ON m.id = el2.memory_id
+      JOIN entities e ON e.id = el1.entity_id
+      WHERE el1.memory_id IN (${placeholders}) AND m.id NOT IN (${placeholders}) AND m.status = 'active' ${clause}
+      GROUP BY m.id ORDER BY graph_weight DESC, m.id DESC LIMIT 40
+    `).all(...ids, ...ids, ...(project.length > 0 ? [project] : []))
+    const seen = new Set(ids)
+    const out = []
+    for (const row of rows) {
+      if (seen.has(row.id)) continue
+      seen.add(row.id)
+      out.push(row)
+      if (out.length >= limit * 3) break
+    }
+    return out
+  }
+
+  /** P2：记录一次压缩的账面数据（只读账本，幂等）。 */
+  recordLedger({ compactionId = '', sessionId = '', start = 0, end = 0, shadowedTokens = 0, summaryChars = 0 } = {}) {
+    if (this.db === undefined) return false
+    const summaryTokens = Math.ceil(Math.max(0, summaryChars) / 1.6)
+    const saved = Math.max(0, Number(shadowedTokens) - summaryTokens)
+    try {
+      this.db.prepare(`INSERT INTO compaction_ledger (compaction_id, session_id, start_seq, end_seq, shadowed_tokens, summary_tokens, saved_tokens, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(compaction_id) DO NOTHING`)
+        .run(String(compactionId), sessionId, start, end, Number(shadowedTokens) || 0, summaryTokens, saved, nowSeconds())
+      return true
+    } catch { return false }
+  }
+
+  /** P2：判断新消息是否在压缩后重复了被折叠区间里的内容（复问）。 */
+  markReask(sessionId, seq, text) {
+    if (this.db === undefined || !Number.isFinite(seq) || String(text ?? '').length < 4) return false
+    try {
+      const rows = this.db.prepare("SELECT * FROM compaction_ledger WHERE session_id = ? AND reask = 0 AND end_seq < ? AND ? - end_seq <= 20 ORDER BY end_seq DESC LIMIT 3").all(sessionId, seq, seq)
+      if (rows.length === 0) return false
+      const queryTokens = tokens(text)
+      if (queryTokens.size === 0) return false
+      for (const row of rows) {
+        const folded = this.db.prepare("SELECT text FROM messages WHERE session_id = ? AND seq BETWEEN ? AND ?").all(sessionId, row.start_seq, row.end_seq)
+        if (folded.length === 0) continue
+        const foldedTokens = tokens(folded.map((item) => item.text).join('\n'))
+        let overlap = 0
+        for (const token of queryTokens) if (foldedTokens.has(token)) overlap += 1
+        if (overlap / queryTokens.size >= 0.6) {
+          this.db.prepare('UPDATE compaction_ledger SET reask = 1 WHERE id = ?').run(row.id)
+          this.logEvent('reask', { sessionId, detail: `seq ${row.start_seq}-${row.end_seq}` })
+          return true
+        }
+      }
+    } catch { /* 账本统计失败不影响召回 */ }
+    return false
+  }
+
+  /** P2：压缩账本汇总。 */
+  ledgerStats(sessionId = '') {
+    if (this.db === undefined) return { count: 0, saved: 0, reask: 0, rate: 0, last: null }
+    try {
+      const where = sessionId.length > 0 ? 'WHERE session_id = ?' : ''
+      const args = sessionId.length > 0 ? [sessionId] : []
+      const row = this.db.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(saved_tokens), 0) AS saved, COALESCE(SUM(reask), 0) AS reask FROM compaction_ledger ${where}`).get(...args)
+      const last = this.db.prepare(`SELECT * FROM compaction_ledger ${where} ORDER BY id DESC LIMIT 1`).get(...args)
+      const count = Number(row?.count) || 0
+      return { count, saved: Number(row?.saved) || 0, reask: Number(row?.reask) || 0, rate: count > 0 ? Number(row.reask) / count : 0, last: last ?? null }
+    } catch { return { count: 0, saved: 0, reask: 0, rate: 0, last: null } }
+  }
+
+  /** P1：图谱规模。 */
+  graphStats() {
+    if (this.db === undefined) return { entities: 0, links: 0 }
+    try {
+      const e = this.db.prepare('SELECT COUNT(*) AS n FROM entities').get()
+      const l = this.db.prepare('SELECT COUNT(*) AS n FROM entity_links').get()
+      return { entities: Number(e?.n) || 0, links: Number(l?.n) || 0 }
+    } catch { return { entities: 0, links: 0 } }
+  }
+
   /** W5：待审核列表。 */
   reviewList(limit = 20) {
     if (this.db === undefined) return []
@@ -991,6 +1135,7 @@ export class MemoryStore {
     this.enforceCapacity()
     this.syncFtsRow(id, trimmed, tags.join(','))
     this.queueEmbedding(id, trimmed)
+    this.linkEntities(id, trimmed, tags, project)
     return { id, action: 'inserted', scope: safeScope, confidence: confidenceValue }
   }
 
@@ -1614,17 +1759,23 @@ export class MemoryStore {
     const events = this.db.prepare('SELECT * FROM context_events ORDER BY id DESC LIMIT ?').all(recent)
     const links = this.db.prepare('SELECT * FROM memory_links ORDER BY id').all()
     const messages = this.db.prepare('SELECT * FROM messages ORDER BY id LIMIT 20000').all()
+    const entities = this.db.prepare('SELECT * FROM entities ORDER BY id').all()
+    const entityLinks = this.db.prepare('SELECT * FROM entity_links ORDER BY id').all()
+    const compactionLedger = this.db.prepare('SELECT * FROM compaction_ledger ORDER BY id').all()
     const payload = {
-      version: 4,
+      version: 5,
       exported_at: new Date().toISOString(),
       db: this.file,
       memories,
       links,
       messages,
       events,
+      entities,
+      entity_links: entityLinks,
+      compaction_ledger: compactionLedger,
     }
     writeFileSync(path, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 })
-    return { memories: memories.length, messages: messages.length, events: events.length }
+    return { memories: memories.length, messages: messages.length, events: events.length, entities: entities.length, ledger: compactionLedger.length }
   }
 
   counts() {
@@ -2083,6 +2234,7 @@ async function maybeRecall(ctx, store, session, event) {
   const deadline = Number.isFinite(budgetMs) && budgetMs > 0 ? startedAt + budgetMs : Number.POSITIVE_INFINITY
   const timeLeft = () => deadline - Date.now()
   try { store.indexSession(session, event.seq) } catch { /* 消息索引失败不阻塞召回 */ }
+  try { store.markReask(session.id, event.seq, text) } catch { /* 账本统计失败不阻塞召回 */ }
   if (store.total() === 0 && store.messageCount() === 0) return
 
   const state = stateOf(session)
@@ -2193,6 +2345,25 @@ async function maybeRecall(ctx, store, session, event) {
         usedTokens += estimateInjectTokens(item.text)
       }
     } catch { /* 邻居扩展失败不影响主召回 */ }
+  }
+
+  // P1：图谱 1-hop——共享实体的记忆最多补 2 条，预算内且标记来源。
+  if (chosen.length < store.config.recallMaxItems) {
+    try {
+      const factIds = chosen.filter(item => typeof item.id === 'number').map(item => item.id)
+      const already = new Set(chosen.map(item => item.id))
+      for (const item of store.graphNeighbors(factIds, { limit: 2, project })) {
+        if (chosen.length >= store.config.recallMaxItems) break
+        if (already.has(item.id)) continue
+        if (used + item.text.length > store.config.recallMaxChars) continue
+        if (!fits(item.text)) continue
+        item.via = 'graph'
+        item.via_entities = item.via_entities
+        chosen.push(item)
+        used += item.text.length
+        usedTokens += estimateInjectTokens(item.text)
+      }
+    } catch { /* 图谱扩展失败不影响主召回 */ }
   }
 
   if (agent === undefined) return
@@ -2767,6 +2938,14 @@ async function recordCompactionSummary(ctx, store, session, event) {
       evidence: `${start}-${end}`,
     })
     if (result.action === 'inserted') {
+      store.recordLedger({
+        compactionId: String(data.compactionId ?? `seq-${start}-${end}`),
+        sessionId: session.id,
+        start,
+        end,
+        shadowedTokens: Number(data.shadowedTokenCount) || 0,
+        summaryChars: text.length,
+      })
       store.logEvent('summary', {
         sessionId: session.id,
         memoryIds: [result.id],
@@ -2924,6 +3103,11 @@ async function recallExplainText(ctx, store, session, query, rewritten = null) {
       const full = chosen.length >= config.recallMaxItems || used + item.text.length > config.recallMaxChars
       rows.push(`- #${item.id} ${item.kind}/${item.scope} 邻居扩展（权 ${Number(item.link_weight).toFixed(2)}，来源 #${chosen[0]}）\n  ${full ? '跳过（预算已满）' : '入选（邻居扩展）'}`)
     }
+    for (const item of store.graphNeighbors(chosen.slice(0, 3), { limit: 2, project })) {
+      if (chosen.includes(item.id)) continue
+      const full = chosen.length >= config.recallMaxItems || used + item.text.length > config.recallMaxChars
+      rows.push(`- #${item.id} ${item.kind}/${item.scope} 图谱扩展（共享实体 ${item.via_entities}）\n  ${full ? '跳过（预算已满）' : '入选（图谱扩展）'}`)
+    }
   }
   return [
     `召回调试：「${query}」记忆候选 ${hits.length} 条 / 消息候选 ${messageHits.length} 条（预算 ${config.recallMaxItems} 条/${config.recallMaxChars} 字符）${rewritten === null ? '' : `\n改写：${rewritten}`}`,
@@ -2977,6 +3161,14 @@ function statusText(ctx, store, session) {
   const lastWatermark = store.recentEvents(30).find(event => event.kind === 'watermark')
   if (lastWatermark !== undefined) {
     lines.push(`水位压缩：最近 seq ${lastWatermark.detail}（约 ${lastWatermark.tokens} tokens）`)
+  }
+  const ledger = store.ledgerStats(session === undefined ? '' : session.id)
+  if (ledger.count > 0) {
+    lines.push(`压缩账本：${ledger.count} 次折叠，累计省 ${ledger.saved} tokens，复问率 ${(ledger.rate * 100).toFixed(0)}%${ledger.last ? `（最近 seq ${ledger.last.start_seq}-${ledger.last.end_seq}）` : ''}`)
+  }
+  const graph = store.graphStats()
+  if (graph.entities > 0) {
+    lines.push(`图谱：${graph.entities} 个实体 / ${graph.links} 条实体链接（召回时 1-hop 补 ≤2 条）`)
   }
   if (session !== undefined) {
     const activeUnfolds = [...stateOf(session).unfolds.values()]
@@ -3061,6 +3253,8 @@ function statusSnapshot(ctx, store, session, sessionId) {
     memory: { active: 0, superseded: 0, archived: 0, deleted: 0, pending: 0, scopes: { session: 0, project: 0, global: 0 }, kinds: {}, recent: [] },
     activity: [],
   }
+  snapshot.graph = store.graphStats()
+  snapshot.ledger = store.ledgerStats(sessionId ?? '')
   if (session !== undefined) {
     const meter = ctx.get('tokenMeter')
     const detail = { id: sessionId ?? String(session.id ?? ''), surfaceTokens: 0, totalTokens: 0, nodes: 0, pressure: undefined, contextWindow: undefined, parts: null, outputReserve: 0, folded: { count: 0, tokens: 0 }, events: Number(session.seq) || 0 }

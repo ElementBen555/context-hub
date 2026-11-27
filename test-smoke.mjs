@@ -1127,4 +1127,60 @@ process.env.DSH_CONTEXT_HUB_DB = dbPath
   console.log('isolation:', 'session 记忆只在原会话可见')
 }
 
+// ---- P1/P2：图谱 1-hop 与压缩账本 ----
+{
+  const gDb = fileURLToPath(new URL('./tmp-smoke-graph.db', import.meta.url))
+  rmSync(gDb, { force: true })
+  process.env.DSH_CONTEXT_HUB_DB = gDb
+  const gTools = new Map()
+  const gCommands = new Map()
+  const gListeners = new Map()
+  const gSession = { id: 'session-graph', header: { cwd: '/tmp/project-graph' }, seq: 12, eventAt() { return undefined } }
+  const gAgent = { session: gSession, options: { provider: 'fake', model: 'fake-model' }, inject() {} }
+  const gCtx = {
+    logger: { info() {}, warn() {} },
+    get(name) {
+      if (name === 'agents') return { get: id => (id === 'session-graph' ? gAgent : undefined) }
+      if (name === 'tokenMeter') return { contextPressure: () => ({ pressureTokens: 10, contextWindow: 1000 }), measure: () => ({ surfaceTokens: 10, totalTokens: 20, nodes: [] }) }
+      if (name === 'connection') return { fetch: { register() { return () => Promise.resolve() } } }
+      return undefined
+    },
+    tools: { register(definition) { gTools.set(definition.name, definition) } },
+    commands: { register(definition) { gCommands.set(definition.name, definition) } },
+    on(event, handler) { return addListener(gListeners, event, handler) },
+    inject(_deps, callback) { callback(gCtx) },
+    effect() {},
+  }
+  apply(gCtx, { embedding: { enabled: false }, rewrite: { enabled: false }, rerank: { enabled: false } })
+  const gExec = { agent: gAgent, signal: new AbortController().signal, token: {} }
+  const a = await gTools.get('context_hub_remember').execute({ text: '图谱-蓝鲸-部署窗口在周三', tags: '蓝鲸,部署', kind: 'fact' }, gExec)
+  const b = await gTools.get('context_hub_remember').execute({ text: '图谱-蓝鲸-回滚演练在周四', tags: '蓝鲸', kind: 'task' }, gExec)
+  if (!String(a.text).includes('#') || !String(b.text).includes('#')) throw new Error('graph seed insert failed')
+  const gCheck = new DatabaseSync(gDb)
+  const entityCount = gCheck.prepare('SELECT COUNT(*) AS n FROM entities').get().n
+  const edgeCount = gCheck.prepare('SELECT COUNT(*) AS n FROM entity_links').get().n
+  const via = gCheck.prepare("SELECT GROUP_CONCAT(DISTINCT e.name) AS names FROM entity_links el JOIN entities e ON e.id = el.entity_id").get()
+  if (entityCount < 2 || edgeCount < 2 || !String(via.names).includes('蓝鲸')) throw new Error(`graph seed missing: ${entityCount}/${edgeCount}/${via.names}`)
+  const statusA1 = String((await gTools.get('context_hub_status').execute({}, gExec)).text)
+  if (!statusA1.includes('图谱：')) throw new Error('status missing graph line')
+  await emitEvent(gListeners, 'session/event', gSession, {
+    type: 'compaction/summary',
+    data: {
+      compactionId: 'cmp-smoke-1',
+      summary: [{ type: 'text', text: '图谱与账本冒烟摘要：保留部署窗口在每周三晚十点之后、回滚演练在周四下午两个关键约束，并记录负责人 p7 与端口 5432。' }],
+      shadowedRange: { start: 0, end: 5 },
+      shadowedSeqs: [0, 1, 2, 3, 4, 5],
+      shadowedTokenCount: 1000,
+    },
+  })
+  await sleep(15)
+  const ledger = gCheck.prepare('SELECT * FROM compaction_ledger').all()
+  if (ledger.length !== 1 || Number(ledger[0].saved_tokens) <= 0) throw new Error(`ledger missing: ${JSON.stringify(ledger)}`)
+  const statusA2 = String((await gTools.get('context_hub_status').execute({}, gExec)).text)
+  if (!statusA2.includes('压缩账本：1 次折叠')) throw new Error(`status missing ledger line: ${statusA2.slice(0, 200)}`)
+  gCheck.close()
+  console.log('graph  :', `${entityCount} 实体 / ${edgeCount} 链接（共享实体 ${via.names}）`)
+  console.log('ledger :', `1 次折叠，省 ${ledger[0].saved_tokens} tokens`)
+}
+
 console.log('SMOKE OK')

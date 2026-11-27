@@ -644,3 +644,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
 - 预算：默认 `unfold.steps=3`、`unfold.maxChars=8000`（单步原文上限 20000），由 `restoreTranscript()` 按 seq 还原 user/assistant 文本并截断。
 - 工具与命令：`context_hub_unfold`（参数 id/start/end/steps/maxChars）与 `/context-hub unfold [id:<编号>|起始seq] [结束seq] [steps:<n>]`。
 - 测试：冒烟里构造 4 条消息 + 一条 `compaction/summary(shadowedSeqs=[0..3])`，`unfold start=0 end=2 steps=2` 后由 pre-step 的 `enter` 决策带一个 `compact-checkpoint` 消息触发，断言输出消息 `source.form === 'unfold'` 且包含 `ORIGINAL-0`。
+
+## 25. 图谱与压缩账本（1.7.0）
+
+- `entities(id, name, kind, project, created_at)` + `entity_links(memory_id, entity_id, weight, created_at)`；`insert()` 成功后在事务外调用 `linkEntities()`（失败不影响写入）。
+- 实体抽取：标签（2–40 字）+ 引号短语 + 路径/大写常量 + camelCase；每条记忆最多 8 个实体。
+- 召回：`graphNeighbors()` 与给定记忆共享实体的其它 active 记忆，按共享权重排序；预算内最多补 2 条，`via='graph'`。
+- `compaction_ledger` 由 `recordCompactionSummary()` 写入（`compactionId` 幂等）；`markReask()` 在真人消息进入时比对被折叠消息。
+- 面板概览显示账本四项；`status` 增加「压缩账本」「图谱」两行；`exportSnapshot` v5 包含三张新表。
