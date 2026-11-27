@@ -78,6 +78,8 @@ export const defaults = {
   unfold: { steps: 3, maxChars: 8000 },
   /** 接管分级：auto 保持旧行为；observe/assist/takeover/full 显式组合 compactor 与水位。 */
   mode: 'auto',
+  /** A4: 分层复核策略：off / low-confidence / layered。 */
+  reviewPolicy: 'low-confidence',
 }
 
 
@@ -436,6 +438,20 @@ const AB_INSTRUCTION_B = `你是上下文压缩器。把下面的对话压成一
 ## 当前进展
 ## 下一步`
 
+/** 解析 8 段摘要，返回段名 → 内容映射；缺段返回 missing 列表。 */
+function parseSummaryBlocks(text) {
+  const sections = ['用户目标', '用户约束', '关键技术', '文件与代码', '错误与修复', '未完成事项', '当前进展', '下一步']
+  const result = {}
+  const sectionRegex = /##\s*(.+?)\n([\s\S]*?)(?=##|$)/g
+  let match
+  while ((match = sectionRegex.exec(text)) !== null) {
+    const name = match[1].trim()
+    const content = match[2].trim()
+    result[name] = content
+  }
+  return { sections: result, missing: sections.filter(s => !result[s] || result[s] === '(none)') }
+}
+
 const HUB_COMPACTION_INSTRUCTION = `You are the compaction engine for this AI coding assistant. Condense the conversation ABOVE into a checkpoint that lets another model resume the work with no loss of essential context.
 
 Output EXACTLY these 8 Markdown sections, in this order, terse bullets, "(none)" for empty:
@@ -459,6 +475,7 @@ Rules:
  * 任一步失败都抛错，由调用方回退到原生实现。
  */
 async function hubSummarize(ctx, store, input, agent, signal) {
+  const startTime = Date.now()
   const llm = ctx.get('llm')
   if (llm === undefined) throw new Error('llm service unavailable')
   const route = resolveRoute(agent, agent.session)
@@ -499,20 +516,62 @@ async function hubSummarize(ctx, store, input, agent, signal) {
   let text = ''
   let types = {}
   let last = null
+  let retryReason = null
   ;({ text, types, last } = await attempt(maxTokens))
   // 推理型模型可能把预算全花在 reasoning-delta 上，正文为空：放大预算重试一次。
   if (text.trim().length === 0) {
     maxTokens = 8000
-    store.logEvent('compact-hub-retry', { sessionId: agent.session?.id, detail: `empty @3000; ${JSON.stringify(types)}; msgs=${input.messages?.length ?? 0}; finish=${JSON.stringify(last).slice(0, 200)}; aborted=${String(signal?.aborted)}` })
+    retryReason = `empty @3000; ${JSON.stringify(types)}; msgs=${input.messages?.length ?? 0}`
+    store.logEvent('compact-hub-retry', { sessionId: agent.session?.id, detail: retryReason })
     ;({ text, types, last } = await attempt(maxTokens))
   }
-  if (text.trim().length === 0) throw new Error(`hub summarization produced no text (${JSON.stringify(types)}; ${JSON.stringify(last).slice(0, 300)}; aborted=${String(signal?.aborted)})`)
+  if (text.trim().length === 0) throw new Error(`hub summarization produced no text`)
+  
+  // C5: 8 段校验
+  const { missing } = parseSummaryBlocks(text)
+  const sectionCheck = missing.length === 0
+  
+  // C5: 结转未完成目标（如果有上一版摘要，提取其未完成事项）
+  const previousSummary = input.messages?.find(m => m?.content?.[0]?.text?.includes('<compacted-summary>'))
+  if (previousSummary) {
+    const prevText = previousSummary.content[0].text
+    const prevMatch = prevText.match(/## 未完成事项\n([\s\S]*?)(?=##|$)/)
+    if (prevMatch && prevMatch[1].trim() && prevMatch[1].trim() !== '(none)') {
+      const carryOverJobs = prevMatch[1].trim()
+      // 如果新摘要的未完成事项为空，结转旧事项
+      if (!/## 未完成事项\n[\s\S]*?(?=##|$)/.test(text) || text.match(/## 未完成事项\n([\s\S]*?)(?=##|$)/)?.[1]?.trim().length < 10) {
+        text = text.replace(/(## 未完成事项\n)([\s\S]*?)(?=##|$)/, `$1${carryOverJobs}\n\n`)
+      }
+    }
+  }
+  
   const blocks = [{ type: 'text', text }]
+  const durationMs = Date.now() - startTime
+  
+  // C4: 压缩回执 - 记录详细信息
+  const shadowedRange = input.region || {}
+  const shadowedTokens = input.shadowedTokenCount || 0
   store.logEvent('compact-hub', {
     sessionId: agent.session?.id,
     tokens: text.length,
     detail: `${route.provider}/${route.model} ${text.length} chars`,
+    // C4 压缩回执字段
+    ledger: {
+      start: shadowedRange.start || 0,
+      end: shadowedRange.end || 0,
+      shadowedTokens: Number(shadowedTokens) || 0,
+      summaryChars: text.length,
+      compressionRatio: shadowedTokens > 0 ? (text.length / shadowedTokens).toFixed(2) : 'N/A',
+      durationMs,
+      promptVersion: 'hub-8section-v1.0',
+      sectionCheck,
+      missingSections: missing,
+      retry: retryReason !== null,
+      retryReason,
+      types,
+    },
   })
+  
   return {
     summary: blocks,
     rawOutput: blocks,
@@ -520,6 +579,19 @@ async function hubSummarize(ctx, store, input, agent, signal) {
     provider: route.provider,
     model: route.model,
     maxTokens,
+    // C4: 返回回执数据供外部使用
+    ledger: {
+      start: shadowedRange.start || 0,
+      end: shadowedRange.end || 0,
+      shadowedTokens: Number(shadowedTokens) || 0,
+      summaryChars: text.length,
+      compressionRatio: shadowedTokens > 0 ? (text.length / shadowedTokens).toFixed(2) : 'N/A',
+      durationMs,
+      promptVersion: 'hub-8section-v1.0',
+      sectionCheck,
+      missingSections: missing,
+      retry: retryReason !== null,
+    },
   }
 }
 
@@ -1173,10 +1245,18 @@ export class MemoryStore {
 
     const similar = this.mostSimilar(trimmed, safeScope, safeKind, { project, sessionId })
     const conflict = similar.similarity >= 0.85 ? similar.row : undefined
+    let conflictType = 'standard'
     if (conflict !== undefined) {
       const bothDecisions = conflict.kind === 'decision' && safeKind === 'decision'
+      // A3: 三类冲突判定
+      conflictType = classifyConflict(trimmed, conflict.text)
       if (!bothDecisions && this.config.conflictPolicy === 'evidence' && confidenceValue < conflict.confidence) {
-        return { action: 'weaker', id: conflict.id }
+        // 否定翻转总是新证据胜
+        if (conflictType === 'negation-flip' && safeSource === 'explicit') {
+          // explicit 否定旧记忆，继续写入
+        } else {
+          return { action: 'weaker', id: conflict.id, conflictType }
+        }
       }
     }
 
@@ -1187,7 +1267,18 @@ export class MemoryStore {
     const sentenceNoValue = Number.isFinite(sentenceNo) ? Math.trunc(sentenceNo) : -1
     const messageIdValue = String(messageId ?? '').slice(0, 200)
     // W5：高风险来源（自动抽取且置信 <0.8）在 reviewPending 开启时先入 pending，等待人工批准。
-    const statusValue = this.config.reviewPending === true && safeSource === 'extracted' && confidenceValue < 0.8 ? 'pending' : 'active'
+    // A4: 分层复核——knowledge/structural 默认复核，explicit 直写
+    let statusValue = 'active'
+    if (this.config.reviewPending === true) {
+      if (safeSource === 'extracted' && confidenceValue < 0.8) {
+        statusValue = 'pending'
+      } else if (this.config.reviewPolicy === 'layered') {
+        // layered 策略：knowledge/decision 类需要复核
+        if (['decision', 'skill'].includes(safeKind) && safeSource === 'extracted') {
+          statusValue = 'pending'
+        }
+      }
+    }
     let inTx = false
     try { this.db.exec('BEGIN'); inTx = true } catch { /* 已有事务时直接写 */ }
     let id
@@ -1203,7 +1294,10 @@ export class MemoryStore {
     id = row?.id
 
     if (conflict !== undefined && !(conflict.kind === 'decision' && safeKind === 'decision')) {
+      // A3: 根据冲突类型记录 detail
+      const conflictDetail = conflictType !== 'standard' ? ` (${conflictType})` : ''
       this.db.prepare("UPDATE memories SET status = 'superseded', superseded_by = ?, valid_to = ? WHERE id = ?").run(id, createdAt, conflict.id)
+      this.logEvent?.('conflict-detected', { conflictType, newId: id, oldId: conflict.id, detail: `seq ${evidence}${conflictDetail}` })
     }
     // W2：与新记忆最相似的旧记忆连一条 related 边（同 scope 才连，避免跨项目串味）。
     if (similar.row !== undefined && similar.row.id !== undefined && similar.row.id !== id && similar.similarity >= 0.4) {
@@ -2341,10 +2435,15 @@ async function maybeRecall(ctx, store, session, event) {
   }
   let via = 'query'
   const agent = ctx.get('agents')?.get(session.id)
+  
+  // B5: 查询卫生——只取本步真人用户消息，排除注入块、工具结果、其他插件消息
+  const queryText = sanitizeQueryText(session, event.seq)
+  const queryForRecall = queryText || text
+  
   // 硬时限：模型改写/重排占满预算时，宁可本次不注入，也不让记忆拖慢下一步。
-  const rewritten = await rewriteQuery(ctx, store, agent, session, text, deadline)
+  const rewritten = await rewriteQuery(ctx, store, agent, session, queryForRecall, deadline)
   const rewriteMs = Date.now() - startedAt
-  const searchText = rewritten === null ? text : `${text} ${rewritten}`
+  const searchText = rewritten === null ? queryForRecall : `${queryForRecall} ${rewritten}`
   if (rewritten !== null) via = 'query+rewrite'
   const queryVec = timeLeft() > 120 ? await store.embedQuery(searchText) : null
   const embedMs = Date.now() - startedAt - rewriteMs
@@ -2902,6 +3001,27 @@ function newConversation(session, fromSeq) {
   return { text: pieces.join('\n\n'), end: consumed + 1, messages }
 }
 
+/** B5: 构建查询卫生的用户消息文本——排除注入块、工具结果、其他插件消息。 */
+function sanitizeQueryText(session, lastUserSeq) {
+  const pieces = []
+  const end = typeof session.seq === 'number' ? session.seq : 0
+  for (let seq = lastUserSeq; seq < end; seq += 1) {
+    const event = session.eventAt(seq)
+    if (event === undefined) continue
+    // 只取真人用户消息
+    if (event.type !== 'user/message') continue
+    // 排除插件注入
+    if (event.data?.source?.kind === 'context-hub') continue
+    // 排除工具调用结果
+    if (event.data?.source?.form === 'tool_use' || event.data?.source?.form === 'tool_result') continue
+    const text = messageText(event.data?.content)
+    if (text.length > 0) {
+      pieces.push(text)
+    }
+  }
+  return pieces.join('\n').slice(0, 2000)
+}
+
 /** 从抽取结果回指到最可能的原始消息（共享词元最多的一条）。 */
 function bestMessageForMemory(text, messages) {
   const target = tokens(text)
@@ -2953,7 +3073,71 @@ function sentenceIndexFor(text, source) {
   return best
 }
 
-/** 一轮结束后按增量抽取记忆；最多 config.extractPassesPerTurn 次。任何失败只记日志。 */
+/** A3: 检测否定翻转（"不要/不再/取消/停止" 等否定词）。 */
+function isNegation(text) {
+  const negationPatterns = [
+    /(?:不要|别|不再|无须|不必|无需|取消|停止|废弃|删除|移除|禁用|不再使用)/i,
+  ]
+  return negationPatterns.some(p => p.test(text))
+}
+
+/** A3: 检测数值变更（版本号、阈值、配置值）。 */
+function extractNumericValue(text) {
+  // 匹配版本号、数字、百分比、布尔值
+  const patterns = [
+    /v?(\d+\.\d+(?:\.\d+)?)/,  // 版本号
+    /(\d+(?:\.\d+)?)(%?\s*(?:个 | 条 | 次 | 秒 | 毫秒 | 天 | 周 | 月 | 年)?)/,  // 数字 + 单位
+    /(?:true|false|是 | 否 | 开 | 关 | 启用 | 禁用)/i,  // 布尔
+  ]
+  const values = []
+  for (const p of patterns) {
+    const matches = text.match(p)
+    if (matches) values.push(matches[0])
+  }
+  return values
+}
+
+/** A3: 检测状态迁移（open→closed, pending→done 等）。 */
+function extractStatusChange(text) {
+  const statusPatterns = [
+    { from: /(?:打开 | 开启 | 启动 | 创建 | 新增 | 开始)/i, to: 'active' },
+    { from: /(?:关闭 | 停止 | 结束 | 完成 | 做完 | 搞定)/i, to: 'closed' },
+    { from: /(?:待办 | 待处理 | 进行中)/i, to: 'pending' },
+    { from: /(?:完成 | 已解决 | 已修复 | 搞定)/i, to: 'done' },
+  ]
+  for (const { from, to } of statusPatterns) {
+    if (from.test(text)) return to
+  }
+  return null
+}
+
+/** A3: 增强冲突判定——检测否定翻转、数值变更、状态迁移。 */
+function classifyConflict(newText, oldText) {
+  const newNegation = isNegation(newText)
+  const oldNegation = isNegation(oldText)
+  
+  // 否定翻转：新记忆否定旧记忆
+  if (newNegation && !oldNegation) return 'negation-flip'
+  if (!newNegation && oldNegation) return 'negation-flip-reverse'
+  
+  // 数值变更
+  const newValues = extractNumericValue(newText)
+  const oldValues = extractNumericValue(oldText)
+  if (newValues.length > 0 && oldValues.length > 0) {
+    if (JSON.stringify(newValues) !== JSON.stringify(oldValues)) {
+      return 'numeric-change'
+    }
+  }
+  
+  // 状态迁移
+  const newStatus = extractStatusChange(newText)
+  const oldStatus = extractStatusChange(oldText)
+  if (newStatus && oldStatus && newStatus !== oldStatus) {
+    return 'status-migration'
+  }
+  
+  return 'standard'
+}
 async function extractMemories(ctx, store, session) {
   const config = store.config
   const state = stateOf(session)
@@ -2983,11 +3167,38 @@ async function extractMemories(ctx, store, session) {
         break
       }
 
+      // A1: 确定性优先的写入——先检查显式信号，零 LLM 直接写
+      const explicitMemories = extractExplicitMemories(slice.messages)
+      const explicitWritten = []
+      for (const mem of explicitMemories) {
+        const sourceMessage = slice.messages.find(m => m.seq === mem.messageSeq)
+        const result = store.insert({
+          kind: mem.kind,
+          text: mem.text,
+          tags: mem.tags || [],
+          project: projectOf(session, store),
+          sessionId: session.id,
+          scope: scopeForKind(mem.kind),
+          source: 'explicit',
+          confidence: 1.0,
+          evidence: `${state.extractedSeq}-${slice.end - 1}`,
+          messageId: sourceMessage === undefined ? '' : `${session.id}#${sourceMessage.seq}`,
+          messageSeq: sourceMessage?.seq ?? 0,
+          sentenceNo: sourceMessage === undefined ? -1 : sentenceIndexFor(mem.text, sourceMessage?.text || ''),
+        })
+        if (result.action === 'inserted') explicitWritten.push(result.id)
+      }
+      if (explicitWritten.length > 0) {
+        store.logEvent('explicit-remember', { sessionId: session.id, memoryIds: explicitWritten, detail: `seq ${state.extractedSeq}-${slice.end - 1}` })
+      }
+
+      // 剩余内容才走 LLM 抽取
+      const llmText = slice.text
       let output = ''
       const stream = llm.stream({
         provider: route.provider,
         model: route.model,
-        messages: [{ role: 'user', content: [{ type: 'text', text: `${EXTRACT_PROMPT}\n\n---\n${slice.text}` }] }],
+        messages: [{ role: 'user', content: [{ type: 'text', text: `${EXTRACT_PROMPT}\n\n---\n${llmText}` }] }],
         maxTokens: 600,
         sessionId: session.id,
         purpose: 'context-hub:extract',
@@ -3015,7 +3226,7 @@ async function extractMemories(ctx, store, session) {
         })
         if (result.action === 'inserted') written.push(result.id)
       }
-      store.logEvent('extract', { sessionId: session.id, memoryIds: written, detail: `seq ${evidence}` })
+      store.logEvent('extract', { sessionId: session.id, memoryIds: [...explicitWritten, ...written], detail: `seq ${evidence}` })
       state.extractedSeq = slice.end
       store.setKv(`extract:${session.id}`, state.extractedSeq)
       passes += 1
@@ -3029,6 +3240,42 @@ async function extractMemories(ctx, store, session) {
   } finally {
     state.extracting = false
   }
+}
+
+/** A1: 从消息中检测显式信号（记住/以后/不要/偏好/约定），零 LLM 直接写入。 */
+function extractExplicitMemories(messages) {
+  const memories = []
+  const explicitPatterns = [
+    // 记住/保存/以后
+    { pattern: /(?:记住|保存|以后|别忘了|务必|请记住)[:：\s,，]+(.{10,100})/i, kind: 'fact' },
+    // 不要/禁止/避免
+    { pattern: /(?:不要|别|禁止|避免|切勿|不准)[:：\s,，]+(.{10,100})/i, kind: 'preference' },
+    // 偏好/喜欢/习惯
+    { pattern: /(?:偏好|喜欢|习惯|通常|一般|总是)[:：\s,，]+(.{10,100})/i, kind: 'preference' },
+    // 约定/决定/约定
+    { pattern: /(?:约定|决定|确认|确定|达成共识)[:：\s,，]+(.{10,100})/i, kind: 'decision' },
+    // 待办/任务/需要
+    { pattern: /(?:待办|任务|需要|必须|应该|要|得)[:：\s,，]+(.{10,100})/i, kind: 'task' },
+  ]
+  
+  for (const msg of messages) {
+    if (msg.role !== 'user') continue
+    for (const { pattern, kind } of explicitPatterns) {
+      const match = msg.text.match(pattern)
+      if (match && match[1]) {
+        const text = match[1].trim().slice(0, 200)
+        if (text.length >= 10) {
+          memories.push({
+            kind,
+            text,
+            tags: [kind],
+            messageSeq: msg.seq,
+          })
+        }
+      }
+    }
+  }
+  return memories
 }
 
 /** 把 surface 节点按事件类型归类，用于上下文构成观测。 */
@@ -3629,8 +3876,20 @@ function probeText(store, session, limit) {
   const report = store.probe({ limit, project: session === undefined ? '' : projectOf(session, store) })
   store.logEvent('probe', { detail: JSON.stringify({ total: report.total, hits: report.hits, rate: report.rate }) })
   if (report.total === 0) return '没有可用的探针样本（需要 active 且长度 ≥8 的记忆）。'
+  
+  // E4: 诚实指标——显示样本量与置信区间
+  const n = report.total
+  const p = report.rate
+  // 简单置信区间计算（Wilson 区间近似）
+  const z = 1.96  // 95% 置信度
+  const marginOfError = z * Math.sqrt((p * (1 - p)) / n)
+  const ciLower = Math.max(0, (p - marginOfError) * 100)
+  const ciUpper = Math.min(100, (p + marginOfError) * 100)
+  
   const lines = [
     `检索探针：${report.hits}/${report.total} 命中（top-${store.config.recallMaxItems} 命中率 ${Math.round(report.rate * 100)}%）`,
+    `📊 E4 诚实指标：样本量 n=${n}，95% 置信区间 [${ciLower.toFixed(1)}%, ${ciUpper.toFixed(1)}%]`,
+    `⚠️ 注意：自造探针不构成泛化证据；公共基准结果请见 docs/EVAL.md`,
     ...report.cases.map(item => `- #${item.id} q=「${item.query}」 → ${item.position === null ? '未命中' : `第 ${item.position} 位（${item.score}）`}  ${item.text}`),
   ]
   return lines.join('\n')
