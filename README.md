@@ -45,14 +45,17 @@
 ## 安装
 
 ```bash
-# 分发包（推荐给别的机器；绝对路径必须指向 .tgz）
+# npm registry（1.7.4 起可用；slim 包，不含 embed 依赖）
+# plugin_manager install_bundle(target="dsh-context-hub@1.7.4")
+
+# 分发包（含 embed/node_modules，推荐给别的机器；绝对路径必须指向 .tgz）
 # plugin_manager install_bundle(target="/绝对路径/dist/dsh-context-hub-<版本>.tgz")
 
 # 或者从本地目录安装（开发时）
 # plugin_manager install_bundle(target="/absolute/path/to/context-hub")
 ```
 
-npm 上尚未发布（按用户决定暂缓），所以没有 `dsh-context-hub@0.7.0` 这种 registry 装法。
+`dsh-context-hub` 已于 2026-11-27 发布到 npm（public，首个版本 1.7.4）：https://www.npmjs.com/package/dsh-context-hub 。npm 包是 slim 包（约 280 kB，不含 `embed/node_modules`）；要用本地向量，需在安装目录执行 `cd embed && npm install --ignore-scripts`，或者改用含依赖的 `scripts/pack.sh` 分发包 / `git clone`。
 
 安装后 profile 的 `package.json` 会增加依赖与 bundle 条目，`cordis.patch.yml` 插入 `id: dsh-context-hub`。
 
@@ -258,11 +261,11 @@ curl -s localhost:11434/health    # {"ok":true,...,"ready":true}
 - `package.json`：`files` 含 `src`、`client`、`cordis.patch.yml`、`locale`、`icon.svg`、`README.md`、`LICENSE`、`CHANGELOG.md`、`docs`、`scripts`、`test-smoke.mjs`、`embed/`（含 `node_modules`）；`exports` 增加 `./locale/*.json` 与 `./icon`；`publishConfig.access=public`。
 - 展示元数据：`locale/en.json` / `locale/zh.json` 提供 `meta.title` 与 `meta.description`（不声明 `meta.detail`，详情页回退 README）；`icon.svg` 为 610 B 原创 SVG（限 256 KiB）。
 - `LICENSE`（MIT）与 `CHANGELOG.md` 已就位。打包分两种：`npm pack`（slim，30 个文件、253,204 字节，不含 `embed/node_modules`）与 `scripts/pack.sh`（`git archive`，含 vendored 依赖，约 157MB）。临时用 `npm_config_cache=$PWD/.npm-cache` 绕过只读的 `~/.npm`。
-- 发布状态（2026-11-25）：按用户决定**暂不发布 npm**（本机无 npm 账号），继续以 `link:` 方式装在本机 profile。
+- 发布状态（2026-11-27）：**已发布 npm 1.7.4**（public，slim 包 280.2 kB / 34 文件，shasum `42a143d8…`）；本机 profile 仍以 `link:` 方式开发。
 - 分发包：`dist/` 下的最新 `dsh-context-hub-*.tgz`（版本、文件数、字节数与 SHA-256 以发布时生成的 `dist/INSTALL.md` 为准，避免包内文档自引用过期）；DSH 安装解析器把绝对路径 `.tgz` 识别为 tarball。
 - 打包产物自检：`npm pack` 的 1.0.0 tarball 含 `src/`、`client/`、`cordis.patch.yml`、`locale/`、`icon.svg`、`docs/`；`createRequire` 能解析 `dsh-context-hub`、`./locale/en.json`、`./locale/zh.json`、`./icon`、`./client`，且 `import { apply, inject }` 得到 `tools,commands`（0.7.0 已验证，1.0.0 结构相同）。
-- 发布命令（npm 上仍未发布，发布后才可执行）：`npm publish`；随后 `plugin_manager install_bundle(target="dsh-context-hub@1.6.4")` 验证第三方安装路径。
-- 名称 `dsh-context-hub` 在 npm registry 查询为 404（未占用）。
+- 发布命令：`npm_config_cache=$PWD/.npm-cache npm publish --access public`（需带 bypass 2FA 的 granular token）；发布后用 `plugin_manager install_bundle(target="dsh-context-hub@<版本>")` 验证第三方安装路径。
+- 名称 `dsh-context-hub` 已由 `element555` 注册并持有（registry 可见 `0.0.0-stage` 与 `1.7.4`）。
 
 ## 数据
 
