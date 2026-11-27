@@ -55,7 +55,11 @@
     "context",
     "memory",
     "compaction",
-    "observability"
+    "observability",
+    "dsh-plugin",
+    "dsh-bundle",
+    "sqlite",
+    "i18n"
   ],
   "license": "MIT",
   "repository": {

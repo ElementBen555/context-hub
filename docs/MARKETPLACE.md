@@ -70,6 +70,20 @@ MARKET INDEX OK (DSH validator + structural, npm checked)
 
 `verify-market.mjs` 在没有 DSH 源码的环境会退化为本地结构检查（索引格式、SemVer 降序、图标大小、分类/标签声明、npm 版本存在性）。
 
+## 3. 提交状态（awesome-dsh-plugin）
+
+DSH 市场（Discover）的插件目录来自精选列表 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)：每个插件一个 `data/plugins/<owner>__<repo>.yml`，合并后生成市场索引并发布到 npm `dsh-plugin-catalog`。
+
+| 项 | 状态 |
+|----|------|
+| 提交文件 | `data/plugins/ElementBen555__context-hub.yml`（本仓库副本：`docs/market/awesome-dsh-plugin-entry.yml`） |
+| PR | https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/19298 |
+| 分类 | `memory` |
+| 前置条件 | ✅ 声明 `dsh.bundle.patch` 与 `cordis.patch.yml`；✅ 仓库已加 `dsh-plugin` topic；✅ 仓库创建满 1 天 |
+| 生效时间 | 合并后由维护者重新生成列表，市场索引随 `dsh-plugin-catalog` 发布，通常一天内 |
+
+在合并前，用户仍可通过本仓库自带索引立即在市场里看到本插件（见第 1 节方式 B），或直接用方式 A 一键安装。
+
 ## 3. 提交到聚合 / 官方索引的清单
 
 提交一个条目时，聚合方通常需要以下信息（均已就绪）：
