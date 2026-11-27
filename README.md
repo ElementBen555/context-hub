@@ -274,7 +274,7 @@ curl -s localhost:11434/health    # {"ok":true,...,"ready":true}
 - `package.json`：`files` 含 `src`、`client`、`cordis.patch.yml`、`locale`、`icon.svg`、`README.md`、`LICENSE`、`CHANGELOG.md`、`docs`、`scripts`、`test-smoke.mjs`、`embed/`（含 `node_modules`）；`exports` 增加 `./locale/*.json` 与 `./icon`；`publishConfig.access=public`。
 - 展示元数据：`locale/en.json` / `locale/zh.json` 提供 `meta.title` 与 `meta.description`（不声明 `meta.detail`，详情页回退 README）；`icon.svg` 为 610 B 原创 SVG（限 256 KiB）。
 - `LICENSE`（MIT）与 `CHANGELOG.md` 已就位。打包分两种：`npm pack`（slim，30 个文件、253,204 字节，不含 `embed/node_modules`）与 `scripts/pack.sh`（`git archive`，含 vendored 依赖，约 157MB）。临时用 `npm_config_cache=$PWD/.npm-cache` 绕过只读的 `~/.npm`。
-- 发布状态（2026-11-27）：**已发布 npm 1.8.0 / 1.8.1**（public，slim 包约 290 kB；1.8.1 含 7 语言面板与 6 语言文档）；本机 profile 仍以 `link:` 方式开发。
+- 发布状态（2026-11-27）：**已发布 npm 1.9.0**（public，slim 包约 300 kB；1.9.0 含推荐档、英文召回优化、前缀缓存与水位授权/撤销）；本机 profile 仍以 `link:` 方式开发。
 - 市场索引：`docs/market/index.json`（format 1，DSH 官方解析器校验通过），生成与校验用 `node scripts/build-market-index.mjs` / `node scripts/verify-market.mjs`；提交清单与一键安装说明见 [docs/MARKETPLACE.md](docs/MARKETPLACE.md)。
 - 分发包：`dist/` 下的最新 `dsh-context-hub-*.tgz`（版本、文件数、字节数与 SHA-256 以发布时生成的 `dist/INSTALL.md` 为准，避免包内文档自引用过期）；DSH 安装解析器把绝对路径 `.tgz` 识别为 tarball。
 - 打包产物自检：`npm pack` 的 1.0.0 tarball 含 `src/`、`client/`、`cordis.patch.yml`、`locale/`、`icon.svg`、`docs/`；`createRequire` 能解析 `dsh-context-hub`、`./locale/en.json`、`./locale/zh.json`、`./icon`、`./client`，且 `import { apply, inject }` 得到 `tools,commands`（0.7.0 已验证，1.0.0 结构相同）。

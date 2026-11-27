@@ -28,7 +28,7 @@ const icon = readFileSync(join(root, 'icon.svg'))
 if (icon.byteLength > 32 * 1024) throw new Error(`icon.svg 超过 32KB：${icon.byteLength}`)
 const iconData = `data:image/svg+xml;base64,${icon.toString('base64')}`
 
-const VERSIONS = ['1.8.1', '1.8.0']
+const VERSIONS = ['1.9.0', '1.8.1', '1.8.0']
 
 async function publishTimes() {
   if (offline) return {}

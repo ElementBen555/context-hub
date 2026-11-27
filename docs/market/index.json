@@ -75,8 +75,8 @@
           "dsh-plugin",
           "dsh-bundle",
           "sqlite",
-          "fts5",
-          "i18n"
+          "i18n",
+          "fts5"
         ],
         "labels": [
           "compaction",
@@ -86,6 +86,14 @@
         "sortKeys": {}
       },
       "versions": [
+        {
+          "version": "1.9.0",
+          "publishTimestamp": 1795764304,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
         {
           "version": "1.8.1",
           "publishTimestamp": 1795762241,
