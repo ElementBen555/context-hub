@@ -76,6 +76,8 @@
     "test:panel-i18n": "node scripts/build-client-locales.mjs --check && node scripts/panel-i18n-check.mjs",
     "build:locales": "node scripts/build-client-locales.mjs",
     "check:locales": "node scripts/build-client-locales.mjs --check",
-    "test:docs-i18n": "node scripts/docs-i18n-check.mjs"
+    "test:docs-i18n": "node scripts/docs-i18n-check.mjs",
+    "market:build": "node scripts/build-market-index.mjs",
+    "market:verify": "node scripts/verify-market.mjs"
   }
 }

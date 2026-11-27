@@ -1,0 +1,108 @@
+{
+  "format": 1,
+  "title": {
+    "en": "Context Hub",
+    "zh": "上下文中枢"
+  },
+  "description": {
+    "en": "Compression, long-term memory and context observability for DSH in one bundle: local SQLite, budgeted recall, reversible folding, 7-language panel.",
+    "zh": "把压缩、长期记忆与上下文观测装进一个 DSH bundle：本地 SQLite、预算化召回、可逆折叠、7 语言面板。"
+  },
+  "metadata": {
+    "categories": {
+      "memory": {
+        "title": {
+          "en": "Memory",
+          "zh": "记忆"
+        }
+      },
+      "context": {
+        "title": {
+          "en": "Context",
+          "zh": "上下文"
+        }
+      }
+    },
+    "labels": {
+      "compaction": {
+        "title": {
+          "en": "Compaction",
+          "zh": "压缩"
+        }
+      },
+      "observability": {
+        "title": {
+          "en": "Observability",
+          "zh": "可观测"
+        }
+      },
+      "local-first": {
+        "title": {
+          "en": "Local-first",
+          "zh": "本地优先"
+        }
+      }
+    },
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-context-hub",
+      "title": {
+        "en": "Context Hub",
+        "zh": "上下文中枢"
+      },
+      "description": {
+        "en": "Compression, memory, and context insight in one plugin: SQLite-backed recall, auto-extraction, an optional 8-section compactor, and a status and governance panel.",
+        "zh": "把压缩、记忆、洞察合在一个插件里：SQLite 记忆与自动召回、对话结束自动抽取、可选的 8 段压缩器，以及状态与治理面板。"
+      },
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgdmlld0JveD0iMCAwIDY0IDY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IkNvbnRleHQgaHViIj4KICA8cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0iIzFmMjkzNyIvPgogIDxjaXJjbGUgY3g9IjE4IiBjeT0iMTgiIHI9IjUiIGZpbGw9IiM2MGE1ZmEiLz4KICA8cmVjdCB4PSIyOCIgeT0iMTQiIHdpZHRoPSIyMiIgaGVpZ2h0PSI4IiByeD0iNCIgZmlsbD0iIzkzYzVmZCIgb3BhY2l0eT0iMC45Ii8+CiAgPHJlY3QgeD0iMTIiIHk9IjI4IiB3aWR0aD0iMzAiIGhlaWdodD0iOCIgcng9IjQiIGZpbGw9IiMzNGQzOTkiIG9wYWNpdHk9IjAuOSIvPgogIDxyZWN0IHg9IjEyIiB5PSI0MiIgd2lkdGg9IjE2IiBoZWlnaHQ9IjgiIHJ4PSI0IiBmaWxsPSIjZmJiZjI0IiBvcGFjaXR5PSIwLjkiLz4KICA8cGF0aCBkPSJNMzYgNDRsMTIgMG0tNC00bDQgNC00IDQiIHN0cm9rZT0iI2U1ZTdlYiIgc3Ryb2tlLXdpZHRoPSIzIiBmaWxsPSJub25lIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+      "author": "ElementBen555",
+      "homepage": "https://github.com/ElementBen555/context-hub#readme",
+      "repository": {
+        "url": "https://github.com/ElementBen555/context-hub"
+      },
+      "metadata": {
+        "category": "memory",
+        "keywords": [
+          "dsh",
+          "deepseek-harness",
+          "plugin",
+          "context",
+          "memory",
+          "compaction",
+          "observability",
+          "dsh-plugin",
+          "dsh-bundle",
+          "sqlite",
+          "fts5",
+          "i18n"
+        ],
+        "labels": [
+          "compaction",
+          "observability",
+          "local-first"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "1.8.1",
+          "publishTimestamp": 1795762241,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.8.0",
+          "publishTimestamp": 1795758858,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
+    }
+  ]
+}
