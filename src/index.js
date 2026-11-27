@@ -1112,6 +1112,107 @@ export class MemoryStore {
     return out
   }
 
+  /** E3: 获取记忆的关系图（多跳邻居）。 */
+  memoryGraph(memoryId, { maxDepth = 2, limit = 20 } = {}) {
+    if (this.db === undefined) return { nodes: [], edges: [] }
+    const nodes = new Map()
+    const edges = []
+    const queue = [{ id: memoryId, depth: 0 }]
+    const visited = new Set([memoryId])
+    
+    // 获取起始记忆
+    const startMem = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(memoryId)
+    if (!startMem) return { nodes: [], edges: [] }
+    nodes.set(memoryId, startMem)
+    
+    while (queue.length > 0 && nodes.size < limit) {
+      const { id, depth } = queue.shift()
+      if (depth >= maxDepth) continue
+      
+      // 获取邻居
+      const neighbors = this.db.prepare(`
+        SELECT l.*, m.* FROM memory_links l
+        JOIN memories m ON m.id = CASE WHEN l.from_id = ? THEN l.to_id ELSE l.from_id END
+        WHERE (l.from_id = ? OR l.to_id = ?) AND m.status = 'active'
+      `).all(id, id, id)
+      
+      for (const row of neighbors) {
+        const neighborId = row.id === memoryId ? (row.from_id === id ? row.to_id : row.from_id) : row.id
+        if (visited.has(neighborId)) continue
+        visited.add(neighborId)
+        
+        nodes.set(neighborId, row)
+        edges.push({
+          from: row.from_id === id ? row.to_id : row.from_id,
+          to: row.from_id === id ? row.from_id : row.to_id,
+          relation: row.relation,
+          weight: row.weight,
+        })
+        
+        queue.push({ id: neighborId, depth: depth + 1 })
+        if (nodes.size >= limit) break
+      }
+    }
+    
+    return { nodes: [...nodes.values()], edges }
+  }
+
+  /** E3: 获取冲突链（supersede 关系）。 */
+  conflictChain(memoryId) {
+    if (this.db === undefined) return []
+    const chain = []
+    let current = memoryId
+    
+    // 向前追溯（被谁替代）
+    while (current) {
+      const mem = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(current)
+      if (!mem) break
+      chain.unshift({ ...mem, direction: 'original' })
+      current = mem.superseded_by > 0 ? mem.superseded_by : null
+    }
+    
+    // 向后追溯（替代了谁）
+    current = memoryId
+    const visited = new Set()
+    while (current && !visited.has(current)) {
+      visited.add(current)
+      const superseded = this.db.prepare('SELECT * FROM memories WHERE superseded_by = ?').all(current)
+      for (const mem of superseded) {
+        chain.push({ ...mem, direction: 'superseded' })
+        current = mem.id
+      }
+      if (superseded.length === 0) break
+    }
+    
+    return chain
+  }
+
+  /** E3: 获取记忆的时间线（按 created_at 排序的相关记忆）。 */
+  memoryTimeline({ scope = 'project', project = '', limit = 20 } = {}) {
+    if (this.db === undefined) return []
+    const filters = ["status = 'active'"]
+    const params = []
+    
+    if (scope === 'session') {
+      // session 记忆需要 session_id
+      return []
+    } else if (scope === 'project' && project) {
+      filters.push("(project = ? OR project = '')")
+      params.push(project)
+    } else {
+      filters.push('scope = ?')
+      params.push(scope)
+    }
+    
+    return this.db.prepare(`
+      SELECT id, kind, text, created_at, source, confidence
+      FROM memories
+      WHERE ${filters.join(' AND ')}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(...params, limit)
+  }
+
   /** P1：从文本/标签抽取实体并连到记忆（启发式，零额外 LLM 调用）。 */
   linkEntities(memoryId, text, tags, project) {
     if (this.db === undefined || !Number.isFinite(memoryId)) return 0
@@ -4643,6 +4744,51 @@ function defineCommand(ctx, store) {
         })
         return { kind: 'success', text: lines.join('\n') }
       }
+      // E3: 记忆视图 - 关系图
+      if (sub === 'graph') {
+        const id = Number.parseInt(argument, 10)
+        if (!Number.isFinite(id)) return { kind: 'error', text: '用法：/context-hub graph <记忆编号>' }
+        const row = store.getById(id)
+        if (row === undefined) return { kind: 'error', text: `没有编号为 #${id} 的记忆。` }
+        const { nodes, edges } = store.memoryGraph(id, { maxDepth: 2, limit: 20 })
+        if (nodes.length <= 1) return { kind: 'success', text: `#${id} 没有关联记忆。` }
+        const lines = [
+          `记忆关系图：#${id}（${nodes.length} 个节点，${edges.length} 条边）`,
+          ...nodes.slice(0, 10).map(n => `- #${n.id} [${n.kind}/${n.scope}] ${n.text.slice(0, 60)}${n.id === id ? ' ← 中心' : ''}`),
+          '---',
+          ...edges.slice(0, 10).map(e => `- #${e.from} → #${e.to} (${e.relation}, 权 ${Number(e.weight).toFixed(2)})`),
+        ]
+        return { kind: 'success', text: lines.join('\n') }
+      }
+      // E3: 记忆视图 - 时间线
+      if (sub === 'timeline') {
+        const scope = argument.split(' ')[0] || 'project'
+        const project = store.project || ''
+        const timeline = store.memoryTimeline({ scope, project, limit: 20 })
+        if (timeline.length === 0) return { kind: 'success', text: `没有 ${scope} 范围的记忆时间线。` }
+        const lines = [
+          `记忆时间线（${scope}，最近 ${timeline.length} 条）：`,
+          ...timeline.map((m, i) => `${i + 1}. #${m.id} [${m.kind}] ${new Date(m.created_at * 1000).toISOString().slice(0, 10)} ${m.text.slice(0, 80)}`),
+        ]
+        return { kind: 'success', text: lines.join('\n') }
+      }
+      // E3: 记忆视图 - 冲突链
+      if (sub === 'conflicts') {
+        const id = Number.parseInt(argument, 10)
+        if (!Number.isFinite(id)) return { kind: 'error', text: '用法：/context-hub conflicts <记忆编号>' }
+        const row = store.getById(id)
+        if (row === undefined) return { kind: 'error', text: `没有编号为 #${id} 的记忆。` }
+        const chain = store.conflictChain(id)
+        if (chain.length <= 1) return { kind: 'success', text: `#${id} 没有冲突历史。` }
+        const lines = [
+          `冲突链：#${id}（${chain.length} 条相关记忆）`,
+          ...chain.map((c, i) => {
+            const prefix = c.direction === 'original' ? '→' : '↳'
+            return `${prefix} #${c.id} [${c.status}] ${new Date(c.created_at * 1000).toISOString().slice(0, 10)} ${c.text.slice(0, 60)}`
+          }),
+        ]
+        return { kind: 'success', text: lines.join('\n') }
+      }
       if (sub === 'forget') {
         const id = Number.parseInt(argument, 10)
         if (!Number.isFinite(id)) return { kind: 'error', text: '用法：/context-hub forget <记忆编号>' }
@@ -4714,7 +4860,7 @@ function defineCommand(ctx, store) {
           return { kind: 'error', text: `压缩失败：${error instanceof Error ? error.message : String(error)}` }
         }
       }
-      return { kind: 'error', text: '用法：/context-hub status | doctor | mode [observe|assist|takeover|full] | search <关键词> | remember <内容> | history <关键词> | restore <起始 seq> [结束 seq] | decompress [id:<编号>|起始 seq] [结束 seq] | unfold [id:<编号>|起始 seq] [结束 seq] [steps:<n>] | explain <关键词> | log [条数] | audit <编号> | forget <编号> | supersede <编号> <新内容> | export | export-jsonl | import-jsonl <路径> | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id]' }
+      return { kind: 'error', text: '用法：/context-hub status | doctor | mode [observe|assist|takeover|full] | search <关键词> | remember <内容> | history <关键词> | restore <起始 seq> [结束 seq] | decompress [id:<编号>|起始 seq] [结束 seq] | unfold [id:<编号>|起始 seq] [结束 seq] [steps:<n>] | explain <关键词> | log [条数] | audit <编号> | graph <编号> | timeline [scope] | conflicts <编号> | forget <编号> | supersede <编号> <新内容> | export | export-jsonl | import-jsonl <路径> | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id]' }
     },
   })
 }
