@@ -10,6 +10,12 @@
 plugin_manager install_bundle(target="dsh-context-hub@1.8.1")
 ```
 
+等价的 CLI 写法（在装 DSH 的机器上）：
+
+```bash
+dsh plugin --profile web add dsh-context-hub
+```
+
 slim 包（约 290 kB，72 文件），不含 `embed/node_modules`。需要本地向量时补一步：
 
 ```bash
