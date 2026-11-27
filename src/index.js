@@ -463,27 +463,50 @@ async function hubSummarize(ctx, store, input, agent, signal) {
   if (llm === undefined) throw new Error('llm service unavailable')
   const route = resolveRoute(agent, agent.session)
   if (route === undefined) throw new Error('no provider/model available for summarization')
-  const maxTokens = 3000
-  const options = {
-    provider: route.provider,
-    model: route.model,
-    messages: [
-      ...input.messages,
-      { role: 'user', content: [{ type: 'text', text: HUB_COMPACTION_INSTRUCTION }] },
-    ],
-    maxTokens,
-    sessionId: agent.session?.id,
-    purpose: 'compaction',
-    ...(input.tools === undefined ? {} : { tools: [...input.tools] }),
-    ...(signal === undefined ? {} : { signal }),
+  const attempt = async budget => {
+    const options = {
+      provider: route.provider,
+      model: route.model,
+      messages: [
+        ...input.messages,
+        { role: 'user', content: [{ type: 'text', text: HUB_COMPACTION_INSTRUCTION }] },
+      ],
+      maxTokens: budget,
+      sessionId: agent.session?.id,
+      purpose: 'compaction',
+      ...(agent.session?.toolHistory === undefined ? {} : { toolHistory: agent.session.toolHistory() }),
+      ...(input.tools === undefined ? {} : { tools: [...input.tools] }),
+      ...(signal === undefined ? {} : { signal }),
+    }
+    let text = ''
+    let last = null
+    const types = {}
+    for await (const chunk of llm.stream(options)) {
+      const type = String(chunk?.type ?? 'unknown')
+      types[type] = (types[type] ?? 0) + 1
+      if (chunk?.type === 'error') throw new Error(String(chunk.error?.message ?? chunk.error ?? 'llm stream error'))
+      if (chunk?.type === 'finish') {
+        last = chunk
+        const reason = chunk.finish?.reason
+        const failure = reason?.kind === 'error' ? reason.failure : (chunk.finish?.kind === 'error' ? chunk.finish.failure : undefined)
+        if (failure !== undefined) throw new Error(String(failure?.message ?? failure))
+      }
+      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+    }
+    return { text, types, last }
   }
+  let maxTokens = 3000
   let text = ''
-  for await (const chunk of llm.stream(options)) {
-    if (chunk?.type === 'error') throw new Error(String(chunk.error?.message ?? chunk.error ?? 'llm stream error'))
-    if (chunk?.type === 'finish' && chunk.finish?.kind === 'error') throw new Error('summarization finished with error')
-    if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+  let types = {}
+  let last = null
+  ;({ text, types, last } = await attempt(maxTokens))
+  // 推理型模型可能把预算全花在 reasoning-delta 上，正文为空：放大预算重试一次。
+  if (text.trim().length === 0) {
+    maxTokens = 8000
+    store.logEvent('compact-hub-retry', { sessionId: agent.session?.id, detail: `empty @3000; ${JSON.stringify(types)}; msgs=${input.messages?.length ?? 0}; finish=${JSON.stringify(last).slice(0, 200)}; aborted=${String(signal?.aborted)}` })
+    ;({ text, types, last } = await attempt(maxTokens))
   }
-  if (text.trim().length === 0) throw new Error('hub summarization produced no text')
+  if (text.trim().length === 0) throw new Error(`hub summarization produced no text (${JSON.stringify(types)}; ${JSON.stringify(last).slice(0, 300)}; aborted=${String(signal?.aborted)})`)
   const blocks = [{ type: 'text', text }]
   store.logEvent('compact-hub', {
     sessionId: agent.session?.id,
