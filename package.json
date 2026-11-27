@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-hub",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "private": false,
   "type": "module",
   "description": "SQLite 记忆 + 关键词/FTS5/可选向量 + LLM 改写/重排 + 可选的 8 段压缩器与水位接管 + Web 面板",

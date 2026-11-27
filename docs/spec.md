@@ -367,7 +367,8 @@ runtime_score = base_score × exp(-λ_scope × days_since_last_used) × (1 + 0.1
 
 - `recall` 事件 detail 记录 `rw/em/se/rr` 四段耗时与总耗时，用于定位超时。
 - 查询短于 8 字符跳过改写；重排默认候选 6，头部优势明显时跳过。
-- 目标：召回 p95 < 1.5s；`recall-timeout` 率 < 1%；`rerank-empty` 率 < 5%。
+- 目标：召回 p95 < 1.5s（关闭重排）或 < 3s（开启重排）；`recall-timeout` 率 < 1%；`rerank-empty` 率 < 5%。
+- 1.7.3：`rerank.reasoningEffort` 可配（low 约 −30% 延迟）；头部优势跳过阈值放宽为 `top>=4 && top>=second*1.25`。
 
 ## 9ter. v1.2 语义改写与水位接管（1.2.0）
 

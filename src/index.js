@@ -71,7 +71,7 @@ export const defaults = {
   embedding: { enabled: false, baseUrl: '', model: '', apiKeyEnv: 'DSH_CONTEXT_HUB_EMBED_KEY', minScore: 0.35, timeoutMs: 1500, autoStart: true, fusion: 'weighted', dtype: 'fp32' },
   /** 查询改写（可选）：一次 LLM 调用把查询扩成同义词/英文关键词；失败回退原查询。 */
   rewrite: { enabled: false, provider: '', model: '', maxTokens: 1200, timeoutMs: 12000, cacheSize: 128 },
-  rerank: { enabled: false, provider: '', model: '', candidates: 6, maxTokens: 600, timeoutMs: 8000 },
+  rerank: { enabled: false, provider: '', model: '', candidates: 6, maxTokens: 600, timeoutMs: 8000, reasoningEffort: '' },
   /** 压缩水位（可选，实验）：插件在 pre-step 主动选区间压缩；默认关闭，失败回退原生。 */
   watermark: { enabled: false, triggerRatio: 0.7, retainTokens: 20000, retainTurns: 0, cooldownTurns: 1, minRegionNodes: 4 },
   /** 消息级展开：用原文临时替代压缩摘要的步数与字符预算。 */
@@ -275,6 +275,7 @@ export function resolveConfig(config) {
     provider: String(process.env.DSH_CONTEXT_HUB_RERANK_PROVIDER ?? rawRerank.provider ?? '').trim(),
     model: String(process.env.DSH_CONTEXT_HUB_RERANK_MODEL ?? rawRerank.model ?? '').trim(),
     candidates: clampInt(Number(rawRerank.candidates), 3, 30, defaults.rerank.candidates),
+    reasoningEffort: ['', 'low', 'medium', 'high'].includes(rawRerank.reasoningEffort) ? rawRerank.reasoningEffort : '',
     maxTokens: clampInt(Number(rawRerank.maxTokens), 100, 2000, defaults.rerank.maxTokens),
     timeoutMs: clampInt(Number(rawRerank.timeoutMs), 500, 20000, defaults.rerank.timeoutMs),
   }
@@ -2609,7 +2610,7 @@ async function rerankHits(ctx, store, session, query, hits, agent, deadline) {
   }
   const topScore = Number(hits[0].score) || 0
   const secondScore = Number(hits[1].score) || 0
-  if (topScore >= 3 && topScore >= secondScore * 2 + 0.5) return hits
+  if (topScore >= 4 && topScore >= secondScore * 1.25) return hits
   const listing = candidates.map((item, index) => `${index + 1}) ${item.text}`).join('\n')
   const startedAt = Date.now()
   const ask = async (budget) => {
@@ -2621,6 +2622,7 @@ async function rerankHits(ctx, store, session, query, hits, agent, deadline) {
       system: RERANK_SYSTEM,
       messages: [{ role: 'user', content: [{ type: 'text', text: `Query: ${query.slice(0, 600)}\nCandidates:\n${listing}` }] }],
       maxTokens: budget,
+      ...(config.reasoningEffort ? { reasoningEffort: config.reasoningEffort } : {}),
       signal: AbortSignal.timeout(Math.max(300, Math.min(left, remaining))),
       purpose: 'context-hub:rerank',
     })
