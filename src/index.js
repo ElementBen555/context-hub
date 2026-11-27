@@ -500,51 +500,84 @@ async function hubSummarize(ctx, store, input, agent, signal) {
   }
 }
 
+/** 在已拿到的 compaction 实例上包装 summarize；幂等。 */
+function wrapHubCompactor(service, scope, store) {
+  try {
+    if (service === undefined || typeof service.summarize !== 'function') {
+      store.compactorState = 'native（compaction 服务不可用）'
+      return
+    }
+    if (service.__contextHubCompactor === true) {
+      store.compactorActive = true
+      store.compactorState = 'hub'
+      return
+    }
+    const original = service.summarize
+    service.summarize = async function (input, agent, signal) {
+      try {
+        return await hubSummarize(scope, store, input, agent, signal)
+      } catch (error) {
+        scope.logger?.warn?.(`context-hub: hub compactor failed (${String(error)}); falling back to native`)
+        store.logEvent('compact-hub-fallback', { detail: String(error).slice(0, 200) })
+        return original.call(this, input, agent, signal)
+      }
+    }
+    service.__contextHubCompactor = true
+    store.compactorState = 'hub'
+    store.compactorActive = true
+    store.compactorUninstall = () => {
+      service.summarize = original
+      delete service.__contextHubCompactor
+      store.compactorActive = false
+      store.compactorState = 'native'
+    }
+    scope.effect?.(() => () => {
+      service.summarize = original
+      delete service.__contextHubCompactor
+      store.compactorActive = false
+    })
+    scope.logger?.info?.('context-hub: hub compactor installed')
+  } catch (error) {
+    store.compactorState = `hub 安装失败：${String(error).slice(0, 80)}`
+    scope.logger?.warn?.(`context-hub: hub compactor install failed: ${String(error)}`)
+  }
+}
+
 /** 把 hub summarize 装到 compaction 服务的实例上；失败只告警，不阻塞插件。 */
 function installHubCompactor(ctx, store) {
+  const cached = store.compactionService
+  if (cached !== undefined && typeof cached.summarize === 'function') {
+    wrapHubCompactor(cached, store.compactionScope ?? { logger: ctx.logger }, store)
+    return
+  }
   try {
     ctx.inject(['compaction'], (scope) => {
-      try {
-        const service = scope.get('compaction')
-        if (service === undefined || typeof service.summarize !== 'function') {
-          store.compactorState = 'native（compaction 服务不可用）'
-          return
-        }
-        if (service.__contextHubCompactor === true) return
-        const original = service.summarize
-        service.summarize = async function (input, agent, signal) {
-          try {
-            return await hubSummarize(scope, store, input, agent, signal)
-          } catch (error) {
-            scope.logger?.warn?.(`context-hub: hub compactor failed (${String(error)}); falling back to native`)
-            store.logEvent('compact-hub-fallback', { detail: String(error).slice(0, 200) })
-            return original.call(this, input, agent, signal)
-          }
-        }
-        service.__contextHubCompactor = true
-        store.compactorState = 'hub'
-        store.compactorActive = true
-        store.compactorUninstall = () => {
-          service.summarize = original
-          delete service.__contextHubCompactor
-          store.compactorActive = false
-          store.compactorState = 'native'
-        }
-        scope.effect(() => () => {
-          service.summarize = original
-          delete service.__contextHubCompactor
-          store.compactorActive = false
-        })
-        scope.logger?.info?.('context-hub: hub compactor installed')
-      } catch (error) {
-        store.compactorState = `hub 安装失败：${String(error).slice(0, 80)}`
-        scope.logger?.warn?.(`context-hub: hub compactor install failed: ${String(error)}`)
-      }
+      store.compactionScope = scope
+      const service = scope.get('compaction')
+      store.compactionService = service
+      wrapHubCompactor(service, scope, store)
     })
   } catch (error) {
     store.compactorState = `hub 安装失败：${String(error).slice(0, 80)}`
     ctx.logger?.warn?.(`context-hub: hub compactor inject failed: ${String(error)}`)
   }
+}
+
+/** 切换压缩器并持久化；返回是否生效。 */
+function setCompactor(ctx, store, value) {
+  if (value !== 'hub' && value !== 'native') return undefined
+  store.config.compactor = value
+  if (value === 'hub') installHubCompactor(ctx, store)
+  else {
+    store.compactorUninstall?.()
+    store.compactorActive = false
+    store.compactorState = 'native'
+  }
+  if (store.db !== undefined) {
+    store.setKv('compactor', value)
+    store.logEvent('compactor', { detail: value })
+  }
+  return { value, active: store.compactorActive === true, state: store.compactorState ?? '' }
 }
 
 /** 从会话尾部收集最近 N 条 user/assistant 消息，拼成 A/B 输入。 */
@@ -3532,11 +3565,12 @@ function installStatusRoute(ctx, store) {
               return json(200, { ok: true, action, id, newId: result.id, replaced: id })
             }
             if (action === 'compactor') {
-              if (value === 'hub') installHubCompactor(ctx, store)
-              else if (value === 'native') store.compactorUninstall?.()
-              else return json(400, { ok: false, error: 'value 必须是 hub/native' })
-              store.logEvent('compactor', { detail: `${value}（panel）` })
-              return json(200, { ok: true, action, value, active: store.compactorActive === true })
+              const result = setCompactor(ctx, store, value)
+              if (result === undefined) return json(400, { ok: false, error: 'value 必须是 hub/native' })
+              if (result.value === 'hub' && result.active !== true) {
+                return json(409, { ok: false, action, value, active: false, error: result.state || 'compaction 服务不可用' })
+              }
+              return json(200, { ok: true, action, value: result.value, active: result.active, state: result.state })
             }
             if (action === 'mode') {
               const applied = setCompactionMode(ctx, store, value)
@@ -4002,17 +4036,17 @@ function defineCommand(ctx, store) {
         return { kind: 'success', text: `已切换接管模式：${applied}（压缩器 ${store.compactorActive === true ? 'hub' : 'native'}，水位 ${store.config.watermark.enabled === true ? '开' : '关'}）；已持久化。` }
       }
       if (sub === 'compactor') {
-        if (argument === 'hub') {
-          installHubCompactor(ctx, store)
-          return {
-            kind: store.compactorActive === true ? 'success' : 'error',
-            text: store.compactorActive === true
-              ? '已挂载 hub 压缩器：保留原生触发/选区，仅替换摘要提示词；失败自动回退 native。'
-              : `挂载失败：${store.compactorState ?? 'compaction 服务不可用'}`,
+        if (argument === 'hub' || argument === 'native') {
+          const result = setCompactor(ctx, store, argument)
+          if (result === undefined) return { kind: 'error', text: '用法：/context-hub compactor hub | native' }
+          if (argument === 'hub') {
+            return {
+              kind: result.active === true ? 'success' : 'error',
+              text: result.active === true
+                ? '已挂载 hub 压缩器：保留原生触发/选区，仅替换摘要提示词；失败自动回退 native。'
+                : `挂载失败：${result.state || 'compaction 服务不可用'}`,
+            }
           }
-        }
-        if (argument === 'native') {
-          store.compactorUninstall?.()
           return { kind: 'success', text: '已卸载 hub 压缩器，回到原生摘要。' }
         }
         return {
@@ -4390,6 +4424,17 @@ export function apply(ctx, config) {
     }
   }
   ctx.effect(() => () => store.close())
+
+  try {
+    ctx.inject(['compaction'], (scope) => {
+      store.compactionScope = scope
+      store.compactionService = scope.get('compaction')
+    })
+  } catch {}
+  try {
+    const savedCompactor = store.db !== undefined ? store.getKv('compactor') : undefined
+    if (savedCompactor === 'hub' || savedCompactor === 'native') settings.compactor = savedCompactor
+  } catch {}
 
   defineTools(ctx, store)
   defineCommand(ctx, store)

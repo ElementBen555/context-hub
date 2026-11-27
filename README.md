@@ -66,6 +66,7 @@ plugin_manager set_plugin(target="include:dsh-context-hub", enabled=true)
 
 ## 已验证
 
+- **1.7.4**：面板压缩器 native ⇄ hub 可切换并持久化，失败返回 409；冒烟覆盖路由与快照。
 - **1.7.3**：召回分段耗时复盘（重排占 97%）；`rerank.reasoningEffort=low` 降 30%；新增 `docs/PERF.md`。
 - **1.7.2**：召回分段耗时写入日志；短查询跳过改写；重排默认候选 6；`node test-smoke.mjs` → `SMOKE OK`。
 - **1.7.1**：搜索缓存（写入失效）+ 启动实体回填 + 重排空输出重试/强头跳过；面板图谱 chips 与账本明细；`node test-smoke.mjs` → `SMOKE OK`。

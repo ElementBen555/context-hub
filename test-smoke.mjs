@@ -388,6 +388,17 @@ if (cfgRow2 === undefined || cfgRow2.value !== '7') throw new Error('config not 
 if (Number(cfgEvent2?.n ?? 0) < 1) throw new Error('config-change event missing')
 await postCfg({ action: 'config', key: 'recallMaxItems', value: 8 })
 console.log('config  : recallMaxItems -> 7, persisted, invalid -> 400')
+const compNativeResp = await postCfg({ action: 'compactor', value: 'native' })
+const compNativeBody = await compNativeResp.json()
+if (compNativeBody.ok !== true || compNativeBody.active !== false) throw new Error('compactor native failed: ' + JSON.stringify(compNativeBody))
+if (compactionService.summarize !== nativeSummarize) throw new Error('compactor native did not restore summarize')
+const compHubResp = await postCfg({ action: 'compactor', value: 'hub' })
+const compHubBody = await compHubResp.json()
+if (compHubBody.ok !== true || compHubBody.active !== true) throw new Error('compactor hub failed: ' + JSON.stringify(compHubBody))
+if (compactionService.summarize === nativeSummarize) throw new Error('compactor hub did not wrap summarize')
+const compSnap = await (await route.fetch(new Request('http://localhost/api/context-hub.status?sessionId=session-1'))).json()
+if (compSnap.compactor !== 'hub') throw new Error('snapshot compactor not hub: ' + compSnap.compactor)
+console.log('compactor: native ⇄ hub, snapshot/hub persisted')
 
 // W2：记忆关系（memory_links）与一跳扩展
 await command.handler(invocation('remember 蓝鲸项目使用 sqlite 存储向量。'))
@@ -554,7 +565,7 @@ const modeResp = await actionRoute.fetch(new Request('http://localhost/api/conte
 }))
 const modeBody = await modeResp.json()
 if (modeBody.ok !== true || modeBody.value !== 'observe') throw new Error('action mode failed: ' + JSON.stringify(modeBody))
-console.log('review  :', `pending #${pendingId} → route approve → supersede → forget → mode ok`)
+console.log('review  :', `pending #${pendingId} → approve → supersede → forget → mode ok`)
 process.env.DSH_CONTEXT_HUB_DB = dbPath
 
 // 1.2.0 W3：水位压缩（配置 enabled 后 pre-step 主动选区间调 compactRegion）
