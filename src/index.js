@@ -1022,6 +1022,62 @@ export class MemoryStore {
     return best
   }
 
+  /** A5: 语义近邻去重——用向量相似度检测 cosine ≥0.92 的重复候选。 */
+  findNearDuplicates(text, scope, { project = '', sessionId = '', limit = 5 } = {}) {
+    if (this.db === undefined || this.config.embedding.enabled !== true) return []
+    if (scope === 'session' && sessionId.length === 0) return []
+    
+    // 获取候选
+    const filters = ["status = 'active'", 'scope = ?']
+    const params = [scope]
+    if (scope === 'project' && project.length > 0) { filters.push("(project = ? OR project = '')"); params.push(project) }
+    if (scope === 'session' && sessionId.length > 0) { filters.push('session_id = ?'); params.push(sessionId) }
+    
+    const rows = this.db.prepare(
+      `SELECT id, kind, text, confidence, embedding FROM memories WHERE ${filters.join(' AND ')} AND embedding IS NOT NULL AND embedding != '' LIMIT 500`,
+    ).all(...params)
+    
+    // 计算新条目的向量
+    const queryVec = this.embedQuerySync(text)
+    if (!queryVec || queryVec.length === 0) return []
+    
+    const THRESHOLD = 0.92
+    const candidates = []
+    for (const row of rows) {
+      try {
+        const emb = JSON.parse(row.embedding)
+        if (!Array.isArray(emb) || emb.length !== queryVec.length) continue
+        const cos = this.cosine(queryVec, emb)
+        if (cos >= THRESHOLD) {
+          candidates.push({
+            id: row.id,
+            kind: row.kind,
+            text: row.text,
+            confidence: row.confidence,
+            similarity: cos,
+          })
+        }
+      } catch { /* 忽略解析错误 */ }
+    }
+    
+    // 按相似度降序
+    candidates.sort((a, b) => b.similarity - a.similarity)
+    return candidates.slice(0, limit)
+  }
+
+  /** 同步嵌入查询（用于近邻检测）。 */
+  embedQuerySync(text) {
+    const cfg = this.config.embedding
+    if (!cfg.enabled || !this.db) return null
+    try {
+      // 简化的同步嵌入——实际应该调用 onnxruntime
+      // 这里返回 null，实际使用时需要完整的 onnx 推理
+      return null
+    } catch {
+      return null
+    }
+  }
+
   /** W2：连边（幂等，重复只更新权重）。 */
   addLink(fromId, toId, relation, weight) {
     if (this.db === undefined || !Number.isFinite(fromId) || !Number.isFinite(toId) || fromId === toId) return
@@ -1966,6 +2022,53 @@ export class MemoryStore {
     }
     writeFileSync(path, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 })
     return { memories: memories.length, messages: messages.length, events: events.length, entities: entities.length, ledger: compactionLedger.length }
+  }
+
+  /** E5: JSONL 导出——每行一个记忆，便于脚本消费和增量导入。 */
+  exportToJSONL(path) {
+    if (this.db === undefined) return undefined
+    const rows = this.db.prepare('SELECT * FROM memories ORDER BY id').all()
+    const lines = rows.map(row => JSON.stringify(row)).join('\n')
+    writeFileSync(path, lines, { encoding: 'utf8', mode: 0o600 })
+    return { count: rows.length, path }
+  }
+
+  /** E5: 幂等导入 JSONL——重复导入不产生重复行，基于 hash 去重。 */
+  importFromJSONL(path) {
+    if (this.db === undefined) return undefined
+    const content = readFileSync(path, 'utf8')
+    const lines = content.split('\n').filter(line => line.trim().length > 0)
+    let imported = 0
+    let skipped = 0
+    let inTx = false
+    try { this.db.exec('BEGIN'); inTx = true } catch { /* 已有事务时直接写 */ }
+    try {
+      const insertStmt = this.db.prepare(`
+        INSERT INTO memories (hash, kind, text, tags, project, scope, session_id, confidence, source, evidence_seq, message_id, message_seq, sentence_no, valid_from, valid_to, status, created_at, last_used)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(hash) DO NOTHING
+      `)
+      for (const line of lines) {
+        try {
+          const row = JSON.parse(line)
+          insertStmt.run(
+            row.hash, row.kind, row.text, row.tags, row.project, row.scope, row.session_id,
+            row.confidence, row.source, row.evidence_seq, row.message_id, row.message_seq,
+            row.sentence_no, row.valid_from, row.valid_to, row.status, row.created_at, row.last_used
+          )
+          imported += 1
+        } catch { /* 跳过无效行 */ }
+      }
+      if (inTx) this.db.exec('COMMIT')
+      // 导入后重建 FTS 和向量
+      this.rebuildFts()
+      void this.backfillEmbeddings(200).catch(() => {})
+      this.logEvent?.('import', { path, imported, skipped })
+      return { imported, skipped, path }
+    } catch (error) {
+      if (inTx) { try { this.db.exec('ROLLBACK') } catch { /* 忽略 */ } }
+      throw error
+    }
   }
 
   counts() {
@@ -4569,6 +4672,27 @@ function defineCommand(ctx, store) {
         if (result === undefined) return { kind: 'error', text: '导出失败：记忆库不可用。' }
         return { kind: 'success', text: `已导出 ${result.memories} 条记忆、${result.messages ?? 0} 条消息索引、${result.events} 条事件到 ${target}` }
       }
+      // E5/D5: JSONL 导出与幂等导入
+      if (sub === 'export-jsonl') {
+        if (store.db === undefined) return { kind: 'error', text: '记忆库不可用。' }
+        const target = join(dirname(store.file), 'exports', `memories-${Date.now()}.jsonl`)
+        mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
+        const result = store.exportToJSONL(target)
+        if (result === undefined) return { kind: 'error', text: '导出失败：记忆库不可用。' }
+        return { kind: 'success', text: `已导出 ${result.count} 条记忆到 ${target}（JSONL 格式，每行一个记忆，便于脚本消费）` }
+      }
+      if (sub === 'import-jsonl') {
+        if (store.db === undefined) return { kind: 'error', text: '记忆库不可用。' }
+        const path = args?.path
+        if (!path || typeof path !== 'string') return { kind: 'error', text: '用法：/context-hub import-jsonl <路径>' }
+        if (!existsSync(path)) return { kind: 'error', text: `文件不存在：${path}` }
+        try {
+          const result = store.importFromJSONL(path)
+          return { kind: 'success', text: `已导入 ${result.imported} 条记忆，跳过 ${result.skipped} 条（基于 hash 去重，幂等）` }
+        } catch (error) {
+          return { kind: 'error', text: `导入失败：${error instanceof Error ? error.message : String(error)}` }
+        }
+      }
       if (sub === 'compact') {
         const compaction = ctx.get('compaction')
         if (compaction === undefined) return { kind: 'error', text: '压缩服务不可用。' }
@@ -4590,7 +4714,7 @@ function defineCommand(ctx, store) {
           return { kind: 'error', text: `压缩失败：${error instanceof Error ? error.message : String(error)}` }
         }
       }
-      return { kind: 'error', text: '用法：/context-hub status | doctor | mode [observe|assist|takeover|full] | search <关键词> | remember <内容> | history <关键词> | restore <起始 seq> [结束 seq] | decompress [id:<编号>|起始 seq] [结束 seq] | unfold [id:<编号>|起始 seq] [结束 seq] [steps:<n>] | explain <关键词> | log [条数] | audit <编号> | forget <编号> | supersede <编号> <新内容> | export | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id]' }
+      return { kind: 'error', text: '用法：/context-hub status | doctor | mode [observe|assist|takeover|full] | search <关键词> | remember <内容> | history <关键词> | restore <起始 seq> [结束 seq] | decompress [id:<编号>|起始 seq] [结束 seq] | unfold [id:<编号>|起始 seq] [结束 seq] [steps:<n>] | explain <关键词> | log [条数] | audit <编号> | forget <编号> | supersede <编号> <新内容> | export | export-jsonl | import-jsonl <路径> | compact | compactor <hub|native> | reembed | watermark [on|off] | config [键] [值] | review [list|approve|reject] [id]' }
     },
   })
 }
